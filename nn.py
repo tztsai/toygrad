@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 import time
 import random
+import numbers
 from utils import *
 
 
@@ -25,6 +26,8 @@ class Sequential:
         self.lr = lr
         self.momentum = momentum
         for layer in layers:
+            if isinstance(layer, numbers.Integral):
+                layer = Dense(layer)
             self.add(layer, activation)
         
     @property
@@ -49,17 +52,10 @@ class Sequential:
         Returns:
             an output vector or matrix
         """
-        if len(np.shape(input)) == 1:  # a single vector
-            input = np.array([input])
-            batch = False
-        else:  # a batch of vectors
-            batch = True
-            
         for k in range(start_layer, self.depth):
             output = self.layers[k].forward(input)
             input = output
-        
-        return output if batch else output[0]
+        return output
 
     def backward(self, output, labels):
         """
@@ -200,6 +196,12 @@ class Dense(Layer):
         self.weights = init_weight(input_dim + self.with_bias, self.size)
         
     def forward(self, x, start_layer=0):
+        if len(np.shape(x)) == 1:  # a single vector
+            x = np.array([x])
+            batch = False
+        else:  # a batch of vectors
+            batch = True
+            
         self._input = x
         
         if self.with_bias:
@@ -211,6 +213,9 @@ class Dense(Layer):
         if self.activation:
             y = self.activation(y)
             
+        if not batch:
+            y = y[0]
+
         self._output = y
         return y
 

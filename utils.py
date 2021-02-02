@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 from collections import defaultdict
+from copy import deepcopy
 import tqdm
 
 
@@ -91,7 +93,7 @@ class BatchLoader:
         assert all(len(x) == self.size for x in data), \
             'different sample sizes of data'
         self.bs = batch_size
-        self.steps = range(0, self.size, bs)
+        self.steps = range(0, self.size, batch_size)
         
     def __len__(self):
         return len(self.steps)
