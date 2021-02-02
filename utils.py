@@ -85,32 +85,22 @@ class BatchLoader:
     """An iterable loader that produces minibatches of data."""
     batch_size = 32
 
-    class __Iter:
-        def __init__(self, data, b):
-            self.data = data
-            self.order = np.random.permutation(len(data[0]))
-            self.i = 0
-            self.b = b
-
-        def __next__(self):
-            i, b = self.i, self.b
-            ids = self.order[i * b: (i + 1) * b]
-            batch = [arr[ids] for arr in self.data]
-            if len(batch[0]) == 0: raise StopIteration
-            self.i += 1
-            return batch
-
-    def __init__(self, X, Y, *, bs=batch_size):
-        assert len(X) == len(Y), 'Different array lengths!'
-        self.data = X, Y
-        self.bs = bs
-        self.n = int(np.ceil(len(X) / bs))
+    def __init__(self, *data, batch_size=batch_size):
+        self.data = data
+        self.size = len(data[0])
+        assert all(len(x) == self.size for x in data), \
+            'different sample sizes of data'
+        self.bs = batch_size
+        self.steps = range(0, self.size, bs)
         
     def __len__(self):
-        return self.n
+        return len(self.steps)
 
     def __iter__(self):
-        return BatchLoader.__Iter(self.data, self.bs)
+        order = np.random.permutation(self.size)
+        for i in self.steps:
+            ids = order[i : i + self.bs]
+            yield [a[ids] for a in self.data]
 
 
 class Animation:
