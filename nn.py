@@ -1,130 +1,160 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib
 import time
-import random
-import numbers
+from optimizers import *
+from activations import *
 from utils import *
 
 
-class Sequential:
-    """Basic Sequential Neural Network"""
-    learning_rate = 1e-3
-    momentum = 0.6
-
-    def __init__(self, input_dim, *layers, lr=learning_rate, 
-                 momentum=momentum, activation=None):
+class NN:
+    """Base class of a neural network"""
+    
+    def __init__(self):
+        self.parameters = []
+    
+    def fit(self, input, target, epochs=20, batch_size=32, optimizer=SGD(),
+            val_data=None, callbacks=()):
         """
-        Construct a neural network
+        Given the input data, train the parameters to fit the target data.
+        
+        Args:
+            input: an array of input data - if 1D, then each point is a number;
+                if 2D, then each point is a row vector in the array
+            target: an array of target or label data - if 1D, then each point is a number;
+                if 2D, then each point is a row vector in the array
+            epochs: number of epochs to train  
+            batch_size: batch size  
+            optimizer (Optimizer): optimizer of the parameters  
+            val_data (optional): validation data in the form of (x_val, t_val)  
+            callbacks (list of function): functions to be called at the end of each epoch,
+                each function taking the NN object as input
+        """
+        input = assure_2D(input)
+        target = assure_2D(target)
+
+        batches = BatchLoader(input, target, batch_size=batch_size)
+        history = {'loss': [], 'val_loss': []}
+
+        for epoch in range(epochs):
+            print('\nEpoch:', epoch + 1)
+
+            loss = 0
+            for xb, tb in pbar(batches):
+                yb = self.forward(xb)
+                self.backward(yb, tb)
+                optimizer.update(self.parameters)
+                loss += self.loss(yb, tb, average=False)
+
+            history['loss'].append(loss / len(target))
+            
+            if val_data:
+                x_val, t_val = val_data
+                y_val = self(x_val)
+                history['val_loss'].append(self.loss(y_val, t_val))
+
+            print(', '.join('%s = %.2f' % (k, v[-1])
+                            for k, v in history.items() if v))
+            
+            for callback in callbacks:
+                callback(self)
+
+        return history
+            
+    def forward(self, input):
+        """
+        Receive the input and compute the output.
+        
+        Args:
+            input: an input vector or matrix
+
+        Returns:
+            an output vector or matrix
+        """
+        raise NotImplementedError
+    
+    def backward(self, output, target):
+        """
+        Backpropagate the error between the output and the target.
+
+        Returns:
+            the loss of the output with regard to the target
+        """
+        raise NotImplementedError
+    
+    def __call__(self, input):
+        return self.forward(input)
+    
+    @staticmethod
+    def loss(output, target, metric='l2', average=True):
+        target = assure_2D(target)
+
+        if metric == 'l2':
+            L = np.sum((output - target) ** 2)
+        elif metric == 'l1':
+            L = np.sum(np.abs(output - target))
+        else:
+            raise ValueError('unknown loss metric')
+
+        if average: L /= len(output)
+        return L
+
+
+class Sequential(NN):
+    """Sequential neural network"""
+
+    def __init__(self, input_dim, *layers, activation=None):
+        """
+        Construct a sequential neural network
 
         Args:
-            shape (list of int): number of nodes in each layer
-            lr (optional): learning rate
+            input_dim: dimension of input
+            layers: a sequence of layers; a dense layer can be input as an int which is its size
+            activation (optional): the default activation of layers
         """
-        self.shape = (input_dim,)
-        self.layers = ()
-        self.lr = lr
-        self.momentum = momentum
+        super().__init__()
+        self.shape = [input_dim]
+        self.layers = []
+        self.activation = activation
         for layer in layers:
-            if isinstance(layer, numbers.Integral):
-                layer = Dense(layer)
-            self.add(layer, activation)
+            self.add(Dense(layer) if is_int(layer) else layer)
         
     @property
     def depth(self):
         return len(self.layers)
         
-    def add(self, layer, activation=None):
+    def add(self, layer):
         layer.init(self.shape[-1])
-        self.layers += (layer,)
-        self.shape += (layer.size,)
-        if activation is not None:
-            layer.activation = activation
+        
+        self.layers.append(layer)
+        self.shape.append(layer.size)
+        self.parameters.extend(layer.parameters.values())
+
+        if layer.activation is None:
+            layer.activation = self.activation
     
     def forward(self, input, start_layer=0):
-        """
-        Pass forward the input to produce the output.
-
-        Args:
-            input: an input vector or matrix
-            start_layer: the layer to feed the input
-
-        Returns:
-            an output vector or matrix
-        """
         for k in range(start_layer, self.depth):
             output = self.layers[k].forward(input)
             input = output
         return output
 
-    def backward(self, output, labels):
-        """
-        Backprop the error between the output and the target.
-        """
-        error = output - labels
+    def backward(self, output, target):
+        error = output - target
         for k in reversed(range(self.depth)):
             error = self.layers[k].backward(error, pass_error=k)
             if error is None: break
-
-    def update(self):
-        for layer in self.layers:
-            layer.update(self.lr, self.momentum)
-
-    def fit(self, input, target, epochs=20, val_data=None,
-            plot_curve=True, callbacks=()):
-        if len(target.shape) == 1:
-            target = target.reshape(-1, 1)
-
-        assert input.shape[1] == self.shape[0], 'input dimension mismatch'
-        assert target.shape[1] == self.shape[-1], 'output dimension mismatch'
-
-        batches = BatchLoader(input, target)
-        history = {'loss': [], 'val_loss': []}
-
-        for epoch in range(epochs):
-            print('\nEpoch:', epoch + 1)
-            loss = 0
-
-            for xb, tb in pbar(batches):
-                # compute output
-                yb = self.forward(xb)
-
-                # backprop error
-                self.backward(yb, tb)
-
-                # update weights
-                self.update()
-                
-                # update loss
-                loss += np.sum((yb - tb) ** 2)
-
-            history['loss'].append(loss / len(input))
-            if val_data:
-                history['val_loss'].append(self.loss(val_data[0], val_data[1]))
-
-            print(', '.join('%s = %.2f' % (k, v[-1])
-                            for k, v in history.items() if len(v) > 0))
             
-            for callback in callbacks:
-                callback(self)
+    def step(self, input, target):
+        output = self.forward(input)
+        self.backward(output, target)
 
-        if plot_curve:
-            fig, ax = plt.subplots()
-            plot_history(history['loss'], label='Loss', ax=ax)
-            if val_data:
-                plot_history(history['val_loss'], label='Validation loss', ax=ax)
-            ax.legend()
-            plt.show()
-            
     
 class Layer:
     def __init__(self, size, *, activation=None):
         self.size = size
-        self.weights = None
-        self._input = None
-        self._output = None
-        self._grad = 0
-        self._delta = 0
+        self.parameters = {}
+        self.input = None
+        self.output = None
         self._sigma = None
         self.activation = activation
     
@@ -149,6 +179,13 @@ class Layer:
         else:
             raise ValueError('unknown activation function')
         
+    def __setattr__(self, name, value):
+        if isinstance(value, Parameter):
+            self.parameters[name] = value
+        elif hasattr(self, 'parameters') and name in self.parameters:
+            del self.parameters[name]
+        super().__setattr__(name, value)
+        
     def init(self, input_dim):
         """
         Initialize the weights.
@@ -163,7 +200,7 @@ class Layer:
 
     def backward(self, output, target, pass_error=True):
         """
-        Back prop the error to compute the gradient.
+        Back prop the error and record the gradient.
 
         Returns:
             the error passed to the previous layer
@@ -172,19 +209,6 @@ class Layer:
     
     def __call__(self, input):
         return self.forward(input)
-    
-    def update(self, eta, alpha):
-        """
-        Update weights.
-        
-        Args:
-            eta: learning rate
-            alpha: momentum
-        """
-        delta = alpha * self._delta - (1 - alpha) * self._grad
-        self.weights += eta * delta
-        self._delta = delta
-        self._grad = 0
         
         
 class Dense(Layer):
@@ -193,7 +217,7 @@ class Dense(Layer):
         self.with_bias = with_bias
         
     def init(self, input_dim):
-        self.weights = init_weight(input_dim + self.with_bias, self.size)
+        self.weights = Parameter.rand_init(input_dim + self.with_bias, self.size)
         
     def forward(self, x, start_layer=0):
         if len(np.shape(x)) == 1:  # a single vector
@@ -202,86 +226,61 @@ class Dense(Layer):
         else:  # a batch of vectors
             batch = True
             
-        self._input = x
-        
         if self.with_bias:
             b, w = self.weights[0], self.weights[1:]
             y = x @ w + b
         else:
-            y = x @ w
+            y = x @ self.weights
             
         if self.activation:
             y = self.activation(y)
             
-        if not batch:
-            y = y[0]
+        if not batch: y = y[0]
 
-        self._output = y
+        self.input = x
+        self.output = y
         return y
 
     def backward(self, e, pass_error=True):
-        if self._output is None:  # has not passed forward new data
-            return
+        if self.output is None:
+            return  # has not passed forward new data
 
         if self.activation:
-            e *= self.activation.deriv(self._output)
+            e *= self.activation.deriv(self.output)
             
-        grad = self._input.T @ e
+        grad = self.input.T @ e
         if self.with_bias:  # insert the gradient of bias
-            db = np.sum(e, axis=0)
-            grad = np.insert(grad, 0, db, axis=0)
-        self._grad += grad
+            grad_b = np.sum(e, axis=0)
+            grad = np.insert(grad, 0, grad_b, axis=0)
+        self.weights.grad += grad
         
         # clear the input and output record
-        self._input = self._output = None
+        self.input = self.output = None
         
         if pass_error:
-            # return the error passed back to the previous layer
+            # return the error passed to the previous layer
             return e @ self.weights[1:].T
 
 
-class Activation:
-    def __call__(self, x):
-        raise NotImplementedError
-
-    def deriv(self, y, activated=True):
-        """
-        Return the derivative value of the activation.
-        
-        Args:
-            y: the input value at which the derivative is calculated
-            activated_input: whether the input y has been activated
-        """
-        raise NotImplementedError
-
-
-class Tanh(Activation):
-    def __call__(self, x):
-        return np.tanh(x)
-
-    def deriv(self, y, activated=True):
-        if activated:
-            return 1 - y**2
-        else:
-            return 1 - self(y)**2
-
-
-class Logistic(Activation):
-    def __call__(self, x):
-        return 1 / (1 + np.exp(-x))
-
-    def deriv(self, y, activated=True):
-        if activated:
-            return y * (1 - y)
-        else:
-            return np.exp(y) / (1 + np.exp(y))**2
-
-
-class ReLU(Activation):
+class Parameter(np.ndarray):
+    """A trainable parameter in the neural network"""
+    
     @staticmethod
-    def __call__(x):
-        return np.maximum(x, 0)
+    def rand_init(*size):
+        """Initialize a parameter array using Xavier initialization."""
+        sigma = 1 / np.sqrt(size[0])
+        param = np.random.normal(scale=sigma, size=size)
+        return Parameter(param)
 
-    @staticmethod
-    def deriv(y, activated=True):
-        return (y > 0).astype(float)
+    def __new__(cls, value):
+        # convert the value to an array
+        param = np.asarray(value).view(cls)
+        # gradient of the parameter
+        param.grad = 0
+        # record of the last update made by the optimizer
+        param.delta = 0
+        # return the new parameter
+        return param
+    
+    def zero_grad(self):
+        self.grad = 0

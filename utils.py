@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from collections import defaultdict
-from copy import deepcopy
+import numbers
 import tqdm
 
 
@@ -32,13 +32,11 @@ def join_classes(*classes, labels=None):
     return data[:, 1:], data[:, 0].astype(np.int)
 
 
-def init_weight(*shape):
-    """Initialize a weight matrix using Xavier initialization."""
-    sigma = 1 / np.sqrt(shape[0])
-    return np.random.normal(scale=sigma, size=shape)
+def is_int(x):
+    return isinstance(x, numbers.Integral)
 
 
-def plot_dataset(points, labels, ax=plt):
+def plot_dataset(points, labels, ax=plt, **kwds):
     classes = defaultdict(list)
     
     for label, point in zip(labels, points):
@@ -46,21 +44,29 @@ def plot_dataset(points, labels, ax=plt):
         
     for points in classes.values():
         points = np.array(points)
-        ax.plot(points[:,0], points[:,1], 'o')
+        ax.plot(points[:,0], points[:,1], 'o', **kwds)
 
 
-def plot_history(values, *args, ax=None, title=None, xlabel='Epoch',
-                 ylabel='', show=False, **kwds):
-    epochs = np.arange(len(values)) + 1
+def plot_history(history, *args, title=None, **kwds):
+    fig, ax = plt.subplots()
+    
+    for name, values in history.items():
+        epochs = np.arange(len(values)) + 1
+        ax.plot(epochs, values, *args, label=name, **kwds)
 
-    if ax is None:
-        fig, ax = plt.subplots()
-    ax.plot(epochs, values, *args, **kwds)
     ax.set_title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-
-    if show: plt.show()
+    ax.legend()
+    plt.show()
+    
+    
+def assure_2D(array):
+    dim = len(np.shape(array))
+    if dim == 1:
+        return np.expand_dims(array, axis=1)
+    elif dim == 2:
+        return array
+    else:
+        raise ValueError('invalid array dimension')
     
 
 def pbar(iterable, **kwds):
@@ -68,10 +74,10 @@ def pbar(iterable, **kwds):
     return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
 
 
-def onehot(x, k):
-    m = np.full((len(x), k), -1, dtype=np.int)
+def onehot(x, k, *, cold=0, hot=1):
+    m = np.full((len(x), k), cold, dtype=np.int)
     for i, j in enumerate(x):
-        m[i, j] = 1
+        m[i, j] = hot
     return m
 
 
@@ -148,6 +154,8 @@ class Animation:
 
 
 class AnimStep:
+    """A callback to be added as an input of NN.fit"""
+
     def __init__(self, x, y, show_data=True, binary=False, grid_size=(200, 200)):
         self.anim = Animation(x, y, show_data)
         self.binary = binary
