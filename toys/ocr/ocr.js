@@ -91,13 +91,14 @@ var ocrDemo = {
         }
         ctx.fillStyle = color;
         ctx.fillRect(x * PIXEL_WIDTH, y * PIXEL_WIDTH, PIXEL_WIDTH, PIXEL_WIDTH);
+
+        let value = (color == YELLOW)? 1 : 0.5;
+        this.data[((y - 1)  * TRANSLATED_WIDTH + x) - 1] = value;
     },
 
     drawMark: function(ctx, x, y) {
         var xPixel = Math.floor(x / PIXEL_WIDTH);
         var yPixel = Math.floor(y / PIXEL_WIDTH);
-        this.data[((yPixel - 1)  * TRANSLATED_WIDTH + xPixel) - 1] = 1;
-
         this.fillPixel(ctx, xPixel, yPixel);
 
         // also fill surrounding squares
@@ -107,7 +108,6 @@ var ocrDemo = {
             let x = (i < 2)? z : xPixel;
             let y = (i < 2)? yPixel : z;
             if (z >= 0 && z < TRANSLATED_WIDTH) {
-                this.data[((y - 1) * TRANSLATED_WIDTH + x) - 1] = 0.5;
                 this.fillPixel(ctx, x, y, DARK_YELLOW);
             }
             i += 1;
