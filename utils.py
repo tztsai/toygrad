@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 from collections import defaultdict
+from abc import ABC as baseclass, abstractmethod
 import numbers
 import tqdm
 
@@ -14,14 +14,13 @@ def normal(size, mu=0, sigma=1):
 
 
 def join_classes(*classes, labels=None):
-    """
-    Join several classes of points into a single dataset, keeping their labels.
+    """Join several classes of points into a single dataset, keeping their labels.
 
     Args:
-        - classes: each class is an array, the columns of which are data points
+        classes: each class is a 2D array whose columns are data points
 
     Returns:
-        a dataset and a vector of labels
+        A dataset and a vector of labels.
     """
     if labels is None:
         labels = range(len(classes))
@@ -70,7 +69,7 @@ def assure_2D(array):
     
 
 def pbar(iterable, **kwds):
-    """A process bar"""
+    """A process bar."""
     return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
 
 
@@ -112,12 +111,11 @@ class BatchLoader:
 
 
 class Animation:
-    """Perceptron Training Animation"""
+    """Perceptron Training Animation."""
     time_interval = 5e-3
 
     def __init__(self, x, y, show_data=True):
-        """
-        Initialize the animation with the training data.
+        """Initialize the animation with the training data.
 
         Args:
             X: the inputs
@@ -153,15 +151,26 @@ class Animation:
         plt.ioff()  # turn off interactive mode
 
 
-class AnimStep:
-    """A callback to be added as an input of NN.fit"""
-
-    def __init__(self, x, y, show_data=True, binary=False, grid_size=(200, 200)):
-        self.anim = Animation(x, y, show_data)
-        self.binary = binary
-        self._grid = mesh_grid(self.anim.xlim, self.anim.ylim, *grid_size)
+def train_anim(x, y, show_data=True, binary=False, div_pt=0, grid_size=(200, 200)):
+    """Enables animation during the neural network training.
+    
+    Args:
+        x, y: the training data
+        show_data: whether to display the training data in the animation
+        binary: whether to discretize the output into 0 and 1
+        div_pt: the number that divides the output values into binary classes,
+            ie. an output belongs to one class if it > div_pt, otherwise the other class
+        grid_size: a 2-tuple specifying the resolution of the animation
         
-    def __call__(self, nn):
-        data = np.array([nn.forward(row).reshape(-1) for row in self._grid])
-        if self.binary: data = data > 0
-        self.anim.update(data)
+    Returns:
+        A callback of NN.fit.
+    """
+    anim = Animation(x, y, show_data)
+    grid = mesh_grid(anim.xlim, anim.ylim, *grid_size)
+    
+    def callback(nn):
+        data = np.array([nn(row).squeeze() for row in grid])
+        if binary: data = data > div_pt
+        anim.update(data)
+
+    return callback

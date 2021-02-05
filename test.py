@@ -9,7 +9,7 @@ from utils import *
 from nn import Sequential, Dense
 
 
-# %%
+# %% Linearly Inseparable Data
 data, labels = join_classes(
     normal(50, [0, 2], 0.5),
     normal(50, [-2, 0], 0.5),
@@ -27,7 +27,7 @@ anim_step = AnimStep(data, labels, binary=True)
 model.fit(data, labels, epochs=30, callbacks=[anim_step])
 
 
-# %%
+# %% MNIST digit classification
 from pathlib import Path
 import requests
 import pickle
@@ -79,7 +79,7 @@ for i in range(8):
 plt.show()
 
 
-# %%
+# %% Auto Encoder
 autoencoder = Sequential(arr_size, 30, 10, 30, arr_size,
                          activation='logistic', lr=5e-3)
 autoencoder.fit(x_train, x_train, epochs=50)
