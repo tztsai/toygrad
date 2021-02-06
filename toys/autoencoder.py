@@ -1,38 +1,17 @@
-# To add a new cell, type '# %%'
-# To add a new markdown cell, type '# %% [markdown]'
-# %%
+#%%
+import sys, os
+sys.path.append('..')
+
+import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
-from IPython.display import HTML
-from utils import *
-from nn import Sequential, Dense
-
-
-# %% Linearly Inseparable Data
-data, labels = join_classes(
-    normal(50, [0, 2], 0.5),
-    normal(50, [-2, 0], 0.5),
-    normal(50, [0, -2], 0.5),
-    normal(50, [2, 0], 0.5),
-    labels=[1, -1, 1, -1]
-)
-# plot_dataset(data, labels)
-# plt.show()
-
-model = Sequential(2, Dense(6), Dense(6), Dense(1),
-                   activation='tanh', lr=5e-3)
-
-anim_step = AnimStep(data, labels, binary=True)
-model.fit(data, labels, epochs=30, callbacks=[anim_step])
-
-
-# %% MNIST digit classification
-from pathlib import Path
-import requests
-import pickle
 import gzip
+import pickle
+import requests
+from pathlib import Path
+from models import Sequential
 
+
+#%% Download dataset
 DATA_DIR = Path('.')
 URL = "https://github.com/pytorch/tutorials/raw/master/_static/"
 FILENAME = "mnist.pkl.gz"
@@ -48,42 +27,14 @@ with gzip.open(PATH.as_posix(), "rb") as f:
     ((x_train, y_train), (x_test, y_test), _) = pickle.load(f, encoding="latin-1")
 
 im_size = (28, 28)
-arr_size = np.prod(im_size)
-
-x_sample = x_test[np.random.randint(1000, size=8)]
-
-
-# %%
-model = Sequential(arr_size, Dense(30), Dense(10), activation='tanh')
-model.fit(x_train, onehot(y_train, 10), epochs=30)
-
-output = model.forward(x_test)
-print('MNIST accuracy:', np.mean(np.argmax(output, axis=1) == y_test))
-
-# visualize prediction
-output = np.argmax(model.forward(x_sample), axis=1)
-
-for i in range(8):
-    # plot image
-    ax = plt.subplot(8, 2, 2 * i + 1)
-    ax.axis('off')
-    ax.imshow(x_sample[i].reshape(im_size), cmap='gray')
-
-    # plot prediction
-    ax = plt.subplot(8, 2, 2 * i + 2)
-    ax.set_xlim([-1, 1])
-    ax.set_ylim([-1, 1])
-    ax.axis('off')
-    ax.text(0, 0, str(output[i]), fontsize=15)
-
-plt.show()
+input_dim = np.prod(im_size)
 
 
 # %% Auto Encoder
-autoencoder = Sequential(arr_size, 30, 10, 30, arr_size,
-                         activation='logistic', lr=5e-3)
-autoencoder.fit(x_train, x_train, epochs=50)
+autoencoder = Sequential(input_dim, 30, 10, 30, input_dim, activation='logistic')
+autoencoder.fit(x_train, x_train, epochs=10)
 
+x_sample = x_test[np.random.randint(1000, size=8)]
 output = autoencoder.forward(x_sample)
 
 for i in range(8):

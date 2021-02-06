@@ -101,12 +101,11 @@ class NN:
         
     @staticmethod
     def activation(x):
-        return np.tanh(x)
+        return 1 / (1 + np.exp(-x))
 
     @staticmethod
     def deriv_activation(y):
-        # tanh'(x) = 1 - tanh(x)^2 = 1 - y^2
-        return 1 - y ** 2
+        return y * (1 - y)
     
     def state_dict(self):
         return self.__dict__
