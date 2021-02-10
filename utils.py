@@ -5,8 +5,30 @@ from abc import ABC as baseclass, abstractmethod
 import numbers
 import tqdm
 
+INFO = 2
+DEBUG = 1
+DISPLAY_LEVEL = INFO
+LOG_LEVEL = INFO
 
-def normal(size, mu=0, sigma=1):
+
+def setloglevel(level: str):
+    if type(level) is str:
+        d = {'info': INFO, 'debug': DEBUG}
+        level = d[level.lower()]
+    else:
+        raise TypeError('log level is not a string')
+    global LOG_LEVEL
+    LOG_LEVEL = level
+
+
+_print = print
+def print(*msgs, **kwds):
+    """Override the builtin print function."""
+    if LOG_LEVEL == DISPLAY_LEVEL:
+        _print(*msgs, **kwds)
+
+
+def gaussian(size, mu=0, sigma=1):
     data = []
     for m, s in np.broadcast(mu, sigma):
         data.append(np.random.normal(loc=m, scale=s, size=size))
@@ -31,10 +53,6 @@ def join_classes(*classes, labels=None):
     return data[:, 1:], data[:, 0].astype(np.int)
 
 
-def is_int(x):
-    return isinstance(x, numbers.Integral)
-
-
 def plot_dataset(points, labels, ax=plt, **kwds):
     classes = defaultdict(list)
     
@@ -55,7 +73,6 @@ def plot_history(history, *args, title=None, **kwds):
 
     ax.set_title(title)
     ax.legend()
-    plt.show()
     
     
 def assure_2D(array):
@@ -65,11 +82,12 @@ def assure_2D(array):
     elif dim == 2:
         return array
     else:
-        raise ValueError('invalid array dimension')
+        return array.reshape(len(array), -1)
     
-
+    
 def pbar(iterable, **kwds):
     """A process bar."""
+    if LOG_LEVEL < DISPLAY_LEVEL: return iterable
     return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
 
 

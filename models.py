@@ -1,6 +1,7 @@
 import numpy as np
+import pickle
 from optimizers import Optimizer, SGD
-from activations import Activation
+from functions import Lp_loss as loss_func
 from layers import Layer, Dense
 from utils import *
 
@@ -11,8 +12,8 @@ class NN(baseclass):
     def __init__(self):
         self.parameters = []
     
-    def fit(self, input, target, epochs=20, batch_size=32, optimizer: Optimizer = SGD(),
-            val_data=None, callbacks=()) -> dict:
+    def fit(self, input, target, epochs=20, lr=None, batch_size=32, optimizer: Optimizer = SGD(),
+            loss_metric: str = 'l2', val_data: list = None, callbacks: list = ()) -> dict:
         """Given the input data, train the parameters to fit the target data.
         
         Args:
@@ -21,41 +22,52 @@ class NN(baseclass):
             target: an array of target or label data - if 1D, then each point is a number;
                 if 2D, then each point is a row vector in the array
             epochs: number of epochs to train  
-            batch_size: batch size  
+            lr: learning rate, use the lr of the optimizer by default
+            batch_size: batch size
             optimizer (Optimizer): optimizer of the parameters  
-            val_data (optional): validation data in the form of (x_val, t_val)  
+            loss_metric: the metric to measure the training loss (does not affect backprop!)
+            val_data: validation data in the form of (x_val, t_val)  
             callbacks (list of function): functions to be called at the end of each epoch,
                 each function taking the NN object as input
                 
         Returns:
             A dict of training history including loss etc.
         """
-        input = assure_2D(input)
-        target = assure_2D(target)
-
+        input = np.reshape(input, [len(input), -1])
+        target = np.reshape(target, [len(target), -1])
+        
         batches = BatchLoader(input, target, batch_size=batch_size)
         history = {'loss': [], 'val_loss': []}
 
+        if lr: optimizer.learning_rate = lr
+
+        print('\nStart training', self)
+        print('Input shape:', input.shape)
+        print('Target shape:', target.shape)
+        print('Total epochs:', epochs)
+        print('Batch size:', batch_size)
+        print('Optimizer:', optimizer)
+
         for epoch in range(epochs):
             print('\nEpoch:', epoch + 1)
-
+            
             loss = 0
             for xb, tb in pbar(batches):
                 yb = self.forward(xb)
                 self.backward(yb, tb)
                 optimizer.update(self.parameters)
-                loss += self.loss(yb, tb, average=False)
+                loss += loss_func(yb, tb, average=False, metric=loss_metric)
 
             history['loss'].append(loss / len(target))
             
             if val_data:
                 x_val, t_val = val_data
                 y_val = self(x_val)
-                history['val_loss'].append(self.loss(y_val, t_val))
+                history['val_loss'].append(loss_func(y_val, t_val, metric=loss_metric))
 
-            print(', '.join('%s = %.2f' % (k, v[-1])
-                            for k, v in history.items() if v))
-            
+            print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
+                                   for k, v in history.items() if v))
+
             for callback in callbacks:
                 callback(self)
 
@@ -89,19 +101,23 @@ class NN(baseclass):
     def __call__(self, input):
         return self.forward(input)
 
-    @staticmethod
-    def loss(output, target, metric='l2', average=True):
-        target = assure_2D(target)
+    def eval(self, input, target, metric='l2', average=True):
+        """Compute the loss given the input and the target data."""
+        output = self(input)
+        return loss_func(output, target, metric=metric, average=average)
 
-        if metric == 'l2':
-            L = np.sum((output - target) ** 2)
-        elif metric == 'l1':
-            L = np.sum(np.abs(output - target))
-        else:
-            raise ValueError('unknown loss metric')
-
-        if average: L /= len(output)
-        return L
+    def state_dict(self):
+        return self.__dict__.copy()
+        
+    def save(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self.state_dict(), f)
+        
+    def load(self, filename):
+        with open(filename, 'rb') as f:
+            state = pickle.load(f)
+        for attr in state:
+            setattr(self, attr, state[attr])
 
 
 class Sequential(NN):
@@ -120,14 +136,20 @@ class Sequential(NN):
         self.layers = []
         self.activation = activation
         for layer in layers:
-            self.add(Dense(layer) if is_int(layer) else layer)
+            self.add(Dense(layer)
+                     if isinstance(layer, numbers.Integral)
+                     else layer)
         
     @property
     def depth(self):
         return len(self.layers)
         
-    def add(self, layer):
-        layer.init(self.shape[-1])
+    def add(self, layer: Layer):
+        if layer._built:
+            assert layer.input_dim == self.shape[-1], \
+                "cannot match the input dimensionality of %s" % layer
+        else:
+            layer.setup(self.shape[-1])
         
         self.layers.append(layer)
         self.shape.append(layer.size)
@@ -151,3 +173,7 @@ class Sequential(NN):
     def step(self, input, target):
         output = self.forward(input)
         self.backward(output, target)
+
+    def __repr__(self):
+        layers_repr = ', '.join(map(repr, self.layers))
+        return f'Sequential({self.shape[0]}, {layers_repr})'

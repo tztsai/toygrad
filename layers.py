@@ -1,6 +1,5 @@
 import numpy as np
-from activations import *
-from functools import wraps
+from functions import get_activation, is_activation
 from utils import baseclass, abstractmethod
 
 
@@ -8,93 +7,86 @@ class Parameter(np.ndarray):
     """A trainable parameter in the neural network."""
 
     @staticmethod
-    def rand_init(*size, scale=None):
+    def rand_init(*size, mean=0, scale=None):
         """Randomly initialize a parameter array, following normal distribution.
-        
+
         Args:
             size (int/list): shape of the parameter
             scale (optional): the standard deviation of the normal distribution,
                 by default sqrt(size[0])^-1 (cf. Xavier initialization)
         """
         sigma = 1 / np.sqrt(size[0]) if scale is None else scale
-        param = np.random.normal(scale=sigma, size=size)
+        param = np.random.normal(loc=mean, scale=sigma, size=size)
         return Parameter(param)
 
     def __new__(cls, value):
         # convert the value to an array
         param = np.asarray(value).view(cls)
-        # gradient of the parameter
-        param.grad = 0
         # record of the last update made by the optimizer
         param.delta = 0
-        # return the new parameter
         return param
+    
+    @property
+    def grad(self):
+        if not hasattr(self, '_grad'):
+            self._grad = 0
+            self._dirty = False
+        return self._grad
+    
+    @grad.setter
+    def grad(self, value):
+        self._grad = value
+        self._dirty = True
 
     def zero_grad(self):
-        self.grad = 0
+        self._grad = 0
+        self._dirty = False
 
+    @property
     def need_update(self):
-        return type(self.grad) is not int or self.grad != 0
+        return self._dirty
 
-    
 class Layer(baseclass):
     """Base class of a neural network layer."""
-    
-    def __init__(self, size, *, activation=False):
+
+    def __init__(self, size, *, input_dim=None, activation=False):
         """Initialize a layer of neurons.
-        
+
         Args:
             size: number of neurons in this layer
             activation (optional): Activation function of the layer's output.
                 Its type should be str, Activation or None. None means no activation.
         """
         self.size = size
-        self.parameters = {}
         self.input = None
         self.output = None
-        self._sigma = None
+        self.input_dim = None
+        self.__activation = None
         self.activation = activation
+        self._built = False  # whether the layer has been setup
+        
+        if input_dim is not None:
+            self.setup(input_dim)
 
-        self.__wrap_forward()
-        self.__wrap_backward()
-    
     @property
     def activation(self):
-        return self._sigma
-        
+        return self.__activation
+
     @activation.setter
     def activation(self, sigma):
         if type(sigma) is str:  # interpret the str
-            sigma = sigma.lower()
-            if sigma == 'tanh':
-                self._sigma = Tanh()
-            elif sigma == 'logistic':
-                self._sigma = Logistic()
-            elif sigma == 'relu':
-                self._sigma = ReLU()
-            elif sigma == 'linear':
-                self._sigma = None
-            else:
-                raise ValueError('unknown activation function')
-        elif isinstance(sigma, Activation) or not sigma:
-            self._sigma = sigma
+            self.__activation = get_activation(sigma)
+        elif is_activation(sigma):
+            self.__activation = sigma
         else:
-            raise ValueError('unknown activation function')
-        
-    def __setattr__(self, name, value):
-        # if an attribute is a Parameter, auto add to self.parameters
-        if isinstance(value, Parameter):
-            self.parameters[name] = value
-        # if a member of self.parameters is set to a non-Parameter, remove it
-        elif hasattr(self, 'parameters') and name in self.parameters:
-            del self.parameters[name]
-        super().__setattr__(name, value)
-        
+            raise ValueError("unknown activation function %s" % sigma)
+
     @abstractmethod
-    def init(self, input_dim):
-        """Initialize the weights."""
-        raise NotImplementedError
-    
+    def setup(self, input_dim):
+        """Initialize the weights given the dimension of the input."""
+        self.input_dim = input_dim
+        self._built = True
+
     @abstractmethod
     def forward(self, input):
         """Take the input and compute the output."""
@@ -108,71 +100,93 @@ class Layer(baseclass):
             The error passed to the previous layer, if `pass_error` is True.
         """
         raise NotImplementedError
-    
-    def __wrap_forward(self):
-        """Wraps common procedures around the forward method."""
-        forward = self.forward
+
+    def _wrapped_forward(self, input):
+        if len(np.shape(input)) == 1:  # a single vector
+            input = np.reshape(input, [1, -1])
+            batch = False
+        else:  # a batch of vectors
+            batch = True
+
+        # call the subclass forward method
+        forward = super().__getattribute__("forward")
+        output = forward(input)
+
+        # record input and output
+        # self.input = np.asarray(input)
+        # self.output = np.asarray(output)
+        self.input, self.output = input, output
+
+        if self.activation:
+            output = self.activation(output)
+        if not batch:
+            output = output[0]
+        return output
+
+    def _wrapped_backward(self, error, **kwds):
+        # has not passed forward new input
+        if self.output is None:
+            return None
+
+        # backprop the error through the activation
+        if self.activation:
+            error *= self.activation.deriv(self.output)
+
+        # call the subclass backward method
+        backward = super().__getattribute__("backward")
+        error = backward(error, **kwds)
+
+        # clear input and output records
+        self.input = self.output = None
+
+        return error
+
+    def __setattr__(self, name, value):
+        if not hasattr(self, 'parameters'):
+            super().__setattr__('parameters', {})
         
-        @wraps(forward)
-        def wrapped(input):
-            if len(np.shape(input)) == 1:  # a single vector
-                input = np.array([input])
-                batch = False
-            else:  # a batch of vectors
-                batch = True
-                
-            # call the subclass forward method
-            output = forward(input)
+        # if an attribute is a Parameter, auto add to self.parameters
+        if isinstance(value, Parameter):
+            self.parameters[name] = value
+        # if a member of self.parameters is set to a non-Parameter, remove it
+        elif name in self.parameters:
+            del self.parameters[name]
             
-            # record input and output
-            self.input, self.output = input, output
-            
-            if self.activation:
-                output = self.activation(output)
-            if not batch:
-                output = output[0]
-            return output
-        
-        self.forward = wrapped
-    
-    def __wrap_backward(self):
-        """Wraps common procedures around the backward method."""
-        backward = self.backward
-        
-        @wraps(backward)
-        def wrapped(error, **kwds):
-            # has not passed forward new input
-            if self.output is None:
-                return None
-            
-            # backprop the error through the activation
-            if self.activation:
-                error *= self.activation.deriv(self.output)
-            
-            # call the subclass backward method
-            error = backward(error, **kwds)
-            
-            # clear input and output records
-            self.input = self.output = None
-            
-            return error
-        
-        self.backward = wrapped
-    
+        super().__setattr__(name, value)
+
+    def __getattribute__(self, attr):
+        if attr == "forward":
+            return super().__getattribute__("_wrapped_forward")
+        elif attr == "backward":
+            return super().__getattribute__("_wrapped_backward")
+        else:
+            return super().__getattribute__(attr)
+
     def __call__(self, input):
         return self.forward(input)
-        
-        
+
+    def __repr__(self):
+        return (f"{type(self).__name__}({self.size}%s)" %
+                "" if not self.activation else
+                ", activation='%s'" % type(self.activation).__name__)
+
+
 class Dense(Layer):
     """Dense or fully-connected layer."""
-    
+
     def __init__(self, size, with_bias=True, **kwds):
-        super().__init__(size, **kwds)
+        """
+        Extra args:
+            with_bias: whether the affine transformation has a constant bias
+        """
         self.with_bias = with_bias
-        
-    def init(self, input_dim):
+        super().__init__(size, **kwds)
+
+    def setup(self, input_dim):
+        super().setup(input_dim)
+        # coefficients of the layer's affine transformation
         self.weights = Parameter.rand_init(input_dim + self.with_bias, self.size)
-        
+
     def forward(self, input):
         if self.with_bias:
             bias, weights = self.weights[0], self.weights[1:]
@@ -185,44 +199,82 @@ class Dense(Layer):
         if self.with_bias:  # insert the gradient of bias
             grad_b = np.sum(error, axis=0)
             grad = np.insert(grad, 0, grad_b, axis=0)
-        self.weights.grad += grad
+
+        # limit the magnitude of gradient
+        self.weights.grad += np.clip(grad, -1e6, 1e6)
 
         if pass_error:
             # return the error passed to the previous layer
             return error @ self.weights[1:].T
-        
-        
+
+
 class RBF(Layer):
     """Radial-basis function layer."""
-    sigma = 1
-    step_size = 0.02  # scaling factor of the update of an RBF center
-    neighborhood_radius = 0.03  # nodes within the neighborhood will update with the winner
+    
+    def __init__(self, size, *, sigma=0.1, move_centers=True,
+                 centers_mean=0, centers_deviation=1, step_size=0.01,
+                 update_neighbors=False, nb_radius=0.05, **kwds):
+        """
+        Extra args:
+            sigma: the width of each RBF node
+            move_centers: whether to update the RBF centers during training
+            centers_mean: the mean value of the RBF centers
+            centers_deviation: the standard deviation of the RBF centers
+            step_size: scaling factor of the update of an RBF center
+            update_neighbors: whether nodes within the winner's neighborhood will update with the winner
+            nb_radius: the radius of the neighborhood
+        """
+        self.sigma = sigma
+        self.move_centers = move_centers
+        self.centers_mean = centers_mean
+        self.centers_dev = centers_deviation
+        self.step_size = step_size
+        self.update_neighbors = update_neighbors
+        self.nb_radius = nb_radius
+        super().__init__(size, **kwds)
 
-    def init(self, input_dim):
-        self.centers = Parameter.rand_init(self.size, input_dim, scale=1)
-        
+    def setup(self, input_dim):
+        super().setup(input_dim)
+        # centers of each RBF node
+        self.centers = Parameter.rand_init(self.size, input_dim,
+                                           mean=self.centers_mean,
+                                           scale=self.centers_dev)
+
     @staticmethod
-    def gaussian_rbf(x, mu, sigma=sigma):
-        return np.exp(-np.sum((x - mu)**2, axis=-1) / (2 * sigma**2))
-        
-    def forward(self, input, update_centers=True):
+    def distance(x, y):
+        return np.sum(np.abs(x - y), axis=-1)
+
+    def gaussian_rbf(self, x, mu):
+        return np.exp(-self.distance(x, mu)**2 / (2 * self.sigma**2))
+
+    def forward(self, input):
         return self.gaussian_rbf(input[:, None], self.centers)
 
     def backward(self, error, pass_error=True):
-        """Apply the SOM algorithm to update parameters."""
+        """The RBF layer does not compute gradients nor backprop errors,
+        but it can update its centers during the backward pass."""
+        if not self.move_centers: return
 
         # for each input point, find the "winner" - the nearest RBF center
         winners = np.argmax(self.output, axis=1)
 
         for i, j in enumerate(winners):
-            # search for RBF nodes in the neighborhood of the winner
-            for k in range(self.size):
-                dist = abs(self.output[i, j] - self.output[i, k])
-                if dist <= self.neighborhood_radius:
-                    # node k is in the neighborhood of the winner (node j)
-                    delta = self.input[i] - self.centers[k]
-                    # move the center nearer to the i-th input
-                    self.centers[k] += self.step_size * delta
+            nodes_to_update = {j}
+            
+            if self.update_neighbors:
+                # also update the winner's neighbors
+                neighbors = filter(
+                    lambda k: abs(self.output[i,j] - self.output[i,k]) 
+                              <= self.nb_radius,
+                    range(self.size))
+                nodes_to_update.update(neighbors)
+                
+            for k in nodes_to_update:
+                # move the center nearer to the i-th input
+                delta = self.input[i] - self.centers[k]
+                self.centers[k] += self.step_size * delta
 
-        # the RBF layer does not backprop error
-        return None
+    def __repr__(self):
+        repr = super().__repr__()
+        return repr[:-1] + ", sigma=%.2f" % self.sigma + ")"
+
