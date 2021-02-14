@@ -22,10 +22,17 @@ def setloglevel(level: str):
 
 
 _print = print
+
 def print(*msgs, **kwds):
     """Override the builtin print function."""
     if LOG_LEVEL == DISPLAY_LEVEL:
         _print(*msgs, **kwds)
+        
+        
+def bernoulli(size, p=0.5):
+    if len(np.shape(size)) == 0:
+        size = [size]
+    return (np.random.rand)(*size) < p
 
 
 def gaussian(size, mu=0, sigma=1):
@@ -39,7 +46,7 @@ def join_classes(*classes, labels=None):
     """Join several classes of points into a single dataset, keeping their labels.
 
     Args:
-        classes: each class is a 2D array whose columns are data points
+        classes: each class is a 2D array whose rows are data points
 
     Returns:
         A dataset and a vector of labels.
@@ -47,7 +54,7 @@ def join_classes(*classes, labels=None):
     if labels is None:
         labels = range(len(classes))
     x = np.vstack(classes)
-    y = np.hstack([[l] * len(c) for c, l in zip(classes, labels)]).reshape(-1, 1)
+    y = np.hstack([[l] * len(c) for c, l in zip(classes, labels)])[:, None]
     data = np.hstack([y, x])
     np.random.shuffle(data)
     return data[:, 1:], data[:, 0].astype(np.int)
@@ -75,16 +82,6 @@ def plot_history(history, *args, title=None, **kwds):
     ax.legend()
     
     
-def assure_2D(array):
-    dim = len(np.shape(array))
-    if dim == 1:
-        return np.expand_dims(array, axis=1)
-    elif dim == 2:
-        return array
-    else:
-        return array.reshape(len(array), -1)
-    
-    
 def pbar(iterable, **kwds):
     """A process bar."""
     if LOG_LEVEL < DISPLAY_LEVEL: return iterable
@@ -106,17 +103,33 @@ def mesh_grid(xlim, ylim, nx=100, ny=100):
     return grid
 
 
+def discretize(x, splits):
+    """Discretize the data with the splitting points."""
+    for i, p in enumerate(splits):
+        l = splits[i - 1] if i else -np.inf
+        ids = (l < x) & (x <= p)
+        x[ids] = i
+        if i == len(splits) - 1:
+            x[x > p] = i + 1
+    return x
+    
+
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
-    batch_size = 32
+    batch_size = 16
 
-    def __init__(self, *data, batch_size=batch_size):
+    def __init__(self, *data, batch_size=None):
         self.data = data
         self.size = len(data[0])
         assert all(len(x) == self.size for x in data), \
             'different sample sizes of data'
-        self.bs = batch_size
-        self.steps = range(0, self.size, batch_size)
+            
+        if batch_size:
+            self.bs = batch_size
+        else:
+            self.bs = self.batch_size
+            
+        self.steps = range(0, self.size, self.bs)
         
     def __len__(self):
         return len(self.steps)
@@ -169,15 +182,13 @@ class Animation:
         plt.ioff()  # turn off interactive mode
 
 
-def train_anim(x, y, show_data=True, binary=False, div_pt=0, grid_size=(200, 200)):
+def train_anim(x, y, show_data=True, splits=[0], grid_size=(200, 200)):
     """Enables animation during the neural network training.
     
     Args:
         x, y: the training data
         show_data: whether to display the training data in the animation
-        binary: whether to discretize the output into 0 and 1
-        div_pt: the number that divides the output values into binary classes,
-            ie. an output belongs to one class if it > div_pt, otherwise the other class
+        splits: a list of points to discretize the output
         grid_size: a 2-tuple specifying the resolution of the animation
         
     Returns:
@@ -188,7 +199,7 @@ def train_anim(x, y, show_data=True, binary=False, div_pt=0, grid_size=(200, 200
     
     def callback(nn):
         data = np.array([nn(row).squeeze() for row in grid])
-        if binary: data = data > div_pt
+        data = discretize(data, splits)
         anim.update(data)
 
     return callback

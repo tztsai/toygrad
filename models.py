@@ -8,12 +8,12 @@ from utils import *
 
 class NN(baseclass):
     """Base class of a neural network."""
-    
     def __init__(self):
         self.parameters = []
     
-    def fit(self, input, target, epochs=20, lr=None, batch_size=32, optimizer: Optimizer = SGD(),
-            loss_metric: str = 'l2', val_data: list = None, callbacks: list = ()) -> dict:
+    def fit(self, input, target, *, epochs=20, lr=None, bs=None,
+            optimizer: Optimizer = SGD(), loss_metric: str = 'l2', 
+            val_data: list = None, callbacks: list = ()) -> dict:
         """Given the input data, train the parameters to fit the target data.
         
         Args:
@@ -22,8 +22,8 @@ class NN(baseclass):
             target: an array of target or label data - if 1D, then each point is a number;
                 if 2D, then each point is a row vector in the array
             epochs: number of epochs to train  
-            lr: learning rate, use the lr of the optimizer by default
-            batch_size: batch size
+            lr: learning rate, use lr of the optimizer by default
+            bs: batch size, use bs of BatchLoader by default
             optimizer (Optimizer): optimizer of the parameters  
             loss_metric: the metric to measure the training loss (does not affect backprop!)
             val_data: validation data in the form of (x_val, t_val)  
@@ -36,7 +36,7 @@ class NN(baseclass):
         input = np.reshape(input, [len(input), -1])
         target = np.reshape(target, [len(target), -1])
         
-        batches = BatchLoader(input, target, batch_size=batch_size)
+        batches = BatchLoader(input, target, batch_size=bs)
         history = {'loss': [], 'val_loss': []}
 
         if lr: optimizer.learning_rate = lr
@@ -45,7 +45,7 @@ class NN(baseclass):
         print('Input shape:', input.shape)
         print('Target shape:', target.shape)
         print('Total epochs:', epochs)
-        print('Batch size:', batch_size)
+        print('Batch size:', batches.batch_size)
         print('Optimizer:', optimizer)
 
         for epoch in range(epochs):
@@ -118,8 +118,8 @@ class NN(baseclass):
             state = pickle.load(f)
         for attr in state:
             setattr(self, attr, state[attr])
-
-
+            
+            
 class Sequential(NN):
     """Sequential neural network."""
 
@@ -177,3 +177,11 @@ class Sequential(NN):
     def __repr__(self):
         layers_repr = ', '.join(map(repr, self.layers))
         return f'Sequential({self.shape[0]}, {layers_repr})'
+    
+    
+class Convolutional(NN):
+    """Convolutional neural network."""
+    
+    
+class Recurrent(NN):
+    """Recurrent neural network."""

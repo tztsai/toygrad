@@ -6,25 +6,29 @@ from utils import baseclass, abstractmethod
 class Parameter(np.ndarray):
     """A trainable parameter in the neural network."""
 
-    @staticmethod
-    def rand_init(*size, mean=0, scale=None):
-        """Randomly initialize a parameter array, following normal distribution.
-
-        Args:
-            size (int/list): shape of the parameter
-            scale (optional): the standard deviation of the normal distribution,
-                by default sqrt(size[0])^-1 (cf. Xavier initialization)
+    def __new__(cls, value=None, *, size=None, mean=0, scale=None):
+        """Create a new Parameter.
+        
+        If `value` is given, then it will be converted to a Parameter.
+        However, if `size` is additionally specified, then a new Parameter
+        of this size will be created filled with the given `value`.
+        If `value` is not given, then `size` must be provided to generate
+        a random Parameter following Gaussian distribution. Additionally,
+        `mean` and `scale` of the Gaussian can be specified.
         """
-        sigma = 1 / np.sqrt(size[0]) if scale is None else scale
-        param = np.random.normal(loc=mean, scale=sigma, size=size)
-        return Parameter(param)
-
-    def __new__(cls, value):
-        # convert the value to an array
-        param = np.asarray(value).view(cls)
-        # record of the last update made by the optimizer
-        param.delta = 0
-        return param
+        if value is None:  # random initialization
+            if size is None:
+                raise AssertionError('the size of the Parameter must be'
+                                     'given for random initialization')
+            if scale is None:
+                length = size[0] if hasattr(size, '__getitem__') else size
+                scale = 1 / np.sqrt(length)  # Xavier initialization
+            param = np.random.normal(loc=mean, scale=scale, size=size)
+            return Parameter(param)
+        else: # convert the value to an array
+            if size is not None:  # fill an array of the given size
+                value = np.full(size, value)
+            return np.asarray(value).view(cls)
     
     @property
     def grad(self):
@@ -49,13 +53,14 @@ class Parameter(np.ndarray):
 class Layer(baseclass):
     """Base class of a neural network layer."""
 
-    def __init__(self, size, *, input_dim=None, activation=False):
+    def __init__(self, size, *, input_dim=None, activation=False, dropout=None):
         """Initialize a layer of neurons.
 
         Args:
             size: number of neurons in this layer
-            activation (optional): Activation function of the layer's output.
+            activation: Activation function of the layer's output.
                 Its type should be str, Activation or None. None means no activation.
+            dropout: the probability of dropping out units in the layer
         """
         self.size = size
         self.input = None
@@ -67,6 +72,9 @@ class Layer(baseclass):
         
         if input_dim is not None:
             self.setup(input_dim)
+            
+        self.dropout = (Dropout(p=dropout, input_dim=(self.size))
+                        if dropout else None)
 
     @property
     def activation(self):
@@ -83,9 +91,12 @@ class Layer(baseclass):
 
     @abstractmethod
     def setup(self, input_dim):
-        """Initialize the weights given the dimension of the input."""
-        self.input_dim = input_dim
-        self._built = True
+        """Initialize the parameters given the dimension of the input."""
+        if input_dim is None:
+            assert self.input_dim is not None, 'input dimensionality not given'
+        else:
+            self.input_dim = input_dim
+        print(f"Setup {self}.")
 
     @abstractmethod
     def forward(self, input):
@@ -102,23 +113,22 @@ class Layer(baseclass):
         raise NotImplementedError
 
     def _wrapped_forward(self, input):
-        if len(np.shape(input)) == 1:  # a single vector
-            input = np.reshape(input, [1, -1])
-            batch = False
-        else:  # a batch of vectors
-            batch = True
+        # reshape input
+        batch = len(np.shape(input)) > 1
+        if not batch: input = [input]
+        input = np.reshape(input, [len(input), -1])
 
         # call the subclass forward method
         forward = super().__getattribute__("forward")
         output = forward(input)
 
         # record input and output
-        # self.input = np.asarray(input)
-        # self.output = np.asarray(output)
         self.input, self.output = input, output
 
         if self.activation:
             output = self.activation(output)
+        if self.dropout:
+            output = self.dropout(output)
         if not batch:
             output = output[0]
         return output
@@ -128,7 +138,9 @@ class Layer(baseclass):
         if self.output is None:
             return None
 
-        # backprop the error through the activation
+        # backprop the error through the dropout and the activation
+        if self.dropout:
+            error = self.dropout.backward(error)
         if self.activation:
             error *= self.activation.deriv(self.output)
 
@@ -166,9 +178,11 @@ class Layer(baseclass):
         return self.forward(input)
 
     def __repr__(self):
-        return (f"{type(self).__name__}({self.size}%s)" %
-                "" if not self.activation else
-                ", activation='%s'" % type(self.activation).__name__)
+        return (f"{type(self).__name__}({self.size}%s%s)" %
+                ("" if not self.activation else
+                 ", activation='%s'" % type(self.activation).__name__,
+                 "" if not self.dropout else
+                 ", dropout=%f" % self.dropout.p))
 
 
 class Dense(Layer):
@@ -185,7 +199,7 @@ class Dense(Layer):
     def setup(self, input_dim):
         super().setup(input_dim)
         # coefficients of the layer's affine transformation
-        self.weights = Parameter.rand_init(input_dim + self.with_bias, self.size)
+        self.weights = Parameter(size=[input_dim + self.with_bias, self.size])
 
     def forward(self, input):
         if self.with_bias:
@@ -206,6 +220,28 @@ class Dense(Layer):
         if pass_error:
             # return the error passed to the previous layer
             return error @ self.weights[1:].T
+        
+        
+class Dropout(Layer):
+    """Dropout layer which randomly deactivates some neurons."""
+
+    def __init__(self, p, *, input_dim=None):
+        super().__init__(None, input_dim=input_dim)
+        self.p = p
+        self._mask = None
+        self.activation = None
+
+    def setup(self, input_dim):
+        self.size = input_dim
+        super().setup(input_dim)
+
+    def forward(self, input):
+        mask = bernoulli(self.input_dim, 1 - self.p) / (1 - self.p)
+        self._mask = mask
+        return mask * input
+
+    def backward(self, error, pass_error=True):
+        return error * self._mask
 
 
 class RBF(Layer):
@@ -235,10 +271,9 @@ class RBF(Layer):
 
     def setup(self, input_dim):
         super().setup(input_dim)
-        # centers of each RBF node
-        self.centers = Parameter.rand_init(self.size, input_dim,
-                                           mean=self.centers_mean,
-                                           scale=self.centers_dev)
+        self.centers = Parameter(size=[self.size, input_dim],
+                                 mean=self.centers_mean,
+                                 scale=self.centers_dev)
 
     @staticmethod
     def distance(x, y):

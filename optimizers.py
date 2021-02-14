@@ -12,14 +12,12 @@ class Optimizer(baseclass):
         """Update weights in the whole neural network."""
         for param in parameters:
             if param.need_update:
-                delta = self.delta(param)
-                param += self.lr * delta
-                param.delta = delta
+                param += self.lr * self.grad(param)
                 param.zero_grad()
 
     @abstractmethod
-    def delta(self, parameter):
-        """The change of a parameter before scaling by learning rate."""
+    def grad(self, parameter):
+        """The change rate of a parameter given by the optimizer."""
         raise NotImplementedError
     
     def __repr__(self):
@@ -34,8 +32,13 @@ class SGD(Optimizer):
         super().__init__(lr)
         self.mo = momentum
 
-    def delta(self, parameter):
-        return self.mo * parameter.delta - (1 - self.mo) * parameter.grad
+    def grad(self, parameter):
+        if not hasattr(parameter, 'prev_grad'):
+            grad = -parameter.grad
+        else:
+            grad = self.mo * parameter.prev_grad - (1 - self.mo) * parameter.grad
+        parameter.prev_grad = grad  # store the gradient for the next update
+        return grad
 
     def __repr__(self):
         return super().__repr__()[:-1] + ', momentum=%.2f)' % self.mo
