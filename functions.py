@@ -5,15 +5,15 @@ from utils import sign, bernoulli, baseclass, abstractmethod
 class Function(baseclass):
     """A function that supports both forward and backward passes."""
     
-    def __call__(self, x):
-        return self.forward(x)    
+    def __call__(self, *args, **kwds):
+        return self.forward(*args, **kwds)    
     
     @abstractmethod
-    def forward(self, x):
+    def forward(self, *args, **kwds):
         raise NotImplementedError
 
     @abstractmethod
-    def backward(self, y):
+    def backward(self, *args, **kwds):
         raise NotImplementedError
 
 
@@ -64,30 +64,31 @@ class Loss(Function):
 class L(Loss):
     """Standard loss function defined in the Lp space."""
     
-    def __init__(self, p=2):
+    def __init__(self, p=2, *, avg=True):
         """The p-th power of the p-norm of the residuals.
         If l = 2, it is the square sum of residuals;
         if l = 1, it is the sum of absolute residuals.
         """
         self.p = p
+        self.avg = avg
         self._res = None  # record the residuals during forward
         
-    def forward(self, output, target, average=True):
+    def forward(self, output, target):
         target = np.reshape(target, [len(target), -1])
         self._res = output - target
         
-        loss = np.sum((np.abs(self._res) if self.l % 2
+        loss = np.sum((np.abs(self._res) if self.p % 2
                        else self._res) ** self.p)
         
-        if average: loss /= len(output)
+        if self.avg: loss /= len(output)
         return loss
     
     def backward(self, output, target):
-        if self.l % 2:
-            return (sign(self._res) if self.l == 1 else
+        if self.p % 2:
+            return (sign(self._res) if self.p == 1 else
                     sign(self._res) * self._res ** (self.p - 1))
         else:
-            return (self._res if self.l == 2 else
+            return (self._res if self.p == 2 else
                     self._res ** (self.p - 1))
             
 

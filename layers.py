@@ -55,14 +55,14 @@ class Layer(baseclass):
     
     activation = ActivationAccess()
 
-    def __init__(self, size, *, input_dim=None, activation='default', dropout=None):
+    def __init__(self, size, *, input_dim=None, activation='default', dropout=0):
         """Initialize a layer of neurons.
 
         Args:
             size: number of neurons in this layer
             activation: Activation function of the layer's output.
                 Its type should be str, Activation or None. None means no activation.
-            dropout: the probability of dropping out units in the layer
+            dropout: the probability of dropping out neurons in the layer
         """
         self.size = size
         self.input = None
@@ -103,8 +103,8 @@ class Layer(baseclass):
     def _wrapped_forward(self, input):
         # reshape input
         batch = len(np.shape(input)) > 1
-        if not batch: input = [input]
-        input = np.reshape(input, [len(input), -1])
+        n = len(input) if batch else 1
+        input = np.reshape(input, [n, -1])
 
         # call the subclass forward method
         forward = super().__getattribute__("forward")
@@ -171,7 +171,7 @@ class Layer(baseclass):
                  ", activation='%s'" % type(self.activation).__name__,
                  "" if not self.dropout else
                  ", dropout=%f" % self.dropout.p))
-
+        
 
 class Dense(Layer):
     """Dense or fully-connected layer."""
@@ -203,7 +203,7 @@ class Dense(Layer):
             grad = np.insert(grad, 0, grad_b, axis=0)
 
         # limit the magnitude of gradient
-        self.weights.grad += np.clip(grad, -1e6, 1e6)
+        self.weights.grad += grad #np.clip(grad, -1e6, 1e6)
 
         if pass_error:
             # return the error passed to the previous layer

@@ -39,7 +39,7 @@ class NN(baseclass):
         target = np.reshape(target, [len(target), -1])
         
         optimizer = Optimizer.get(optimizer, lr)
-        loss = Loss.get(loss)
+        loss_func = Loss.get(loss)
         
         batches = BatchLoader(input, target, batch_size=bs)
         history = {'loss': [], 'val_loss': []}
@@ -59,14 +59,14 @@ class NN(baseclass):
                 yb = self.forward(xb)
                 self.backward(yb, tb)
                 optimizer.update(self.parameters)
-                loss += Lp_error(yb, tb, average=False, metric=loss_metric)
+                loss += loss_func(yb, tb)
 
             history['loss'].append(loss / len(target))
             
             if val_data:
                 x_val, t_val = val_data
                 y_val = self(x_val)
-                history['val_loss'].append(Lp_error(y_val, t_val, metric=loss_metric))
+                history['val_loss'].append(loss_func(y_val, t_val))
 
             print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
                                    for k, v in history.items() if v))
@@ -104,10 +104,9 @@ class NN(baseclass):
     def __call__(self, input):
         return self.forward(input)
 
-    def eval(self, input, target, metric='l2', average=True):
+    def loss(self, input, target, loss: Union[Loss, str] = 'l2'):
         """Compute the loss given the input and the target data."""
-        output = self(input)
-        return Lp_error(output, target, metric=metric, average=average)
+        return Loss.get(loss)(self.forward(input), target)
 
     def state_dict(self):
         return self.__dict__.copy()
