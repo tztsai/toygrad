@@ -1,5 +1,5 @@
 import numpy as np
-from functions import get_activation, is_activation
+from functions import ActivationAccess, Dropout
 from utils import baseclass, abstractmethod
 
 
@@ -52,8 +52,10 @@ class Parameter(np.ndarray):
 
 class Layer(baseclass):
     """Base class of a neural network layer."""
+    
+    activation = ActivationAccess()
 
-    def __init__(self, size, *, input_dim=None, activation=False, dropout=None):
+    def __init__(self, size, *, input_dim=None, activation='default', dropout=None):
         """Initialize a layer of neurons.
 
         Args:
@@ -66,7 +68,6 @@ class Layer(baseclass):
         self.input = None
         self.output = None
         self.input_dim = None
-        self.__activation = None
         self.activation = activation
         self._built = False  # whether the layer has been setup
         
@@ -75,19 +76,6 @@ class Layer(baseclass):
             
         self.dropout = (Dropout(p=dropout, input_dim=(self.size))
                         if dropout else None)
-
-    @property
-    def activation(self):
-        return self.__activation
-
-    @activation.setter
-    def activation(self, sigma):
-        if type(sigma) is str:  # interpret the str
-            self.__activation = get_activation(sigma)
-        elif is_activation(sigma):
-            self.__activation = sigma
-        else:
-            raise ValueError("unknown activation function %s" % sigma)
 
     @abstractmethod
     def setup(self, input_dim):
@@ -142,7 +130,7 @@ class Layer(baseclass):
         if self.dropout:
             error = self.dropout.backward(error)
         if self.activation:
-            error *= self.activation.deriv(self.output)
+            error *= self.activation.backward(self.output)
 
         # call the subclass backward method
         backward = super().__getattribute__("backward")
@@ -222,28 +210,6 @@ class Dense(Layer):
             return error @ self.weights[1:].T
         
         
-class Dropout(Layer):
-    """Dropout layer which randomly deactivates some neurons."""
-
-    def __init__(self, p, *, input_dim=None):
-        super().__init__(None, input_dim=input_dim)
-        self.p = p
-        self._mask = None
-        self.activation = None
-
-    def setup(self, input_dim):
-        self.size = input_dim
-        super().setup(input_dim)
-
-    def forward(self, input):
-        mask = bernoulli(self.input_dim, 1 - self.p) / (1 - self.p)
-        self._mask = mask
-        return mask * input
-
-    def backward(self, error, pass_error=True):
-        return error * self._mask
-
-
 class RBF(Layer):
     """Radial-basis function layer."""
     

@@ -1,18 +1,18 @@
-from utils import baseclass, abstractmethod
+from utils import baseclass, abstractmethod, Default
 
 
 class Optimizer(baseclass):
     """Base class of an optimizer."""
-    learning_rate = 1e-2
+    learning_rate = Default(1e-2)
     
-    def __init__(self, lr=learning_rate):
-        self.lr = lr
+    def __init__(self, lr=None):
+        self.learning_rate = lr
     
     def update(self, parameters):
         """Update weights in the whole neural network."""
         for param in parameters:
             if param.need_update:
-                param += self.lr * self.grad(param)
+                param += self.learning_rate * self.grad(param)
                 param.zero_grad()
 
     @abstractmethod
@@ -21,24 +21,35 @@ class Optimizer(baseclass):
         raise NotImplementedError
     
     def __repr__(self):
-        return type(self).__name__ + '(lr=%.2e)' % self.lr
+        return type(self).__name__ + f'(lr={self.learning_rate:.2e})'
+    
+    @classmethod
+    def get(cls, opt, lr=None):
+        if type(opt) is str:
+            opt = opt.lower()
+            if opt == 'sgd':
+                return SGD(lr)
+        elif isinstance(opt, cls):
+            return opt
+        else:
+            raise ValueError(f"unknown optimizer: {opt}")
 
 
 class SGD(Optimizer):
-    learning_rate = 1e-3
-    momentum = 0.8
+    momentum = Default(0.8)
     
-    def __init__(self, lr=learning_rate, momentum=momentum):
+    def __init__(self, lr=None, momentum=None):
         super().__init__(lr)
-        self.mo = momentum
+        self.momentum = momentum
 
     def grad(self, parameter):
         if not hasattr(parameter, 'prev_grad'):
             grad = -parameter.grad
         else:
-            grad = self.mo * parameter.prev_grad - (1 - self.mo) * parameter.grad
+            grad = (self.momentum * parameter.prev_grad - 
+                    (1 - self.momentum) * parameter.grad)
         parameter.prev_grad = grad  # store the gradient for the next update
         return grad
 
     def __repr__(self):
-        return super().__repr__()[:-1] + ', momentum=%.2f)' % self.mo
+        return super().__repr__()[:-1] + f', momentum={self.momentum:.2f})'

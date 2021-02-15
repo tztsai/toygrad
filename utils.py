@@ -10,6 +10,9 @@ DEBUG = 1
 DISPLAY_LEVEL = INFO
 LOG_LEVEL = INFO
 
+SEED = 1
+np.random.seed(SEED)
+
 
 def setloglevel(level: str):
     if type(level) is str:
@@ -40,6 +43,10 @@ def gaussian(size, mu=0, sigma=1):
     for m, s in np.broadcast(mu, sigma):
         data.append(np.random.normal(loc=m, scale=s, size=size))
     return np.array(data).T
+
+
+def sign(x, eps=1e-15):
+    return (x >= -eps) * 2 - 1
 
 
 def join_classes(*classes, labels=None):
@@ -203,3 +210,20 @@ def train_anim(x, y, show_data=True, splits=[0], grid_size=(200, 200)):
         anim.update(data)
 
     return callback
+
+
+class Default:
+    """Change to the default value if it is set to None,
+       used as a class attribute."""
+    
+    def __init__(self, default):
+        self.default = self.value = default
+        
+    def __set__(self, obj, value):
+        if value is not None:
+            self.value = value
+        else:
+            self.value = self.default
+            
+    def __get__(self, obj, type=None):
+        return self.value

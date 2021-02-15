@@ -1,19 +1,21 @@
 import numpy as np
 import pickle
-from optimizers import Optimizer, SGD
-from functions import Lp_loss as loss_func
+from typing import Union, Optional
+from optimizers import Optimizer
+from functions import Loss, ActivationAccess
 from layers import Layer, Dense
 from utils import *
 
 
 class NN(baseclass):
     """Base class of a neural network."""
+    
     def __init__(self):
         self.parameters = []
     
     def fit(self, input, target, *, epochs=20, lr=None, bs=None,
-            optimizer: Optimizer = SGD(), loss_metric: str = 'l2', 
-            val_data: list = None, callbacks: list = ()) -> dict:
+            optimizer: Union[str, Optimizer] = 'sgd', loss: Union[str, Loss] = 'l2', 
+            val_data: Optional[list] = None, callbacks: list = ()) -> dict:
         """Given the input data, train the parameters to fit the target data.
         
         Args:
@@ -25,7 +27,7 @@ class NN(baseclass):
             lr: learning rate, use lr of the optimizer by default
             bs: batch size, use bs of BatchLoader by default
             optimizer (Optimizer): optimizer of the parameters  
-            loss_metric: the metric to measure the training loss (does not affect backprop!)
+            loss: the metric to measure the training loss (does not affect backprop!)
             val_data: validation data in the form of (x_val, t_val)  
             callbacks (list of function): functions to be called at the end of each epoch,
                 each function taking the NN object as input
@@ -36,10 +38,11 @@ class NN(baseclass):
         input = np.reshape(input, [len(input), -1])
         target = np.reshape(target, [len(target), -1])
         
+        optimizer = Optimizer.get(optimizer, lr)
+        loss = Loss.get(loss)
+        
         batches = BatchLoader(input, target, batch_size=bs)
         history = {'loss': [], 'val_loss': []}
-
-        if lr: optimizer.learning_rate = lr
 
         print('\nStart training', self)
         print('Input shape:', input.shape)
@@ -56,14 +59,14 @@ class NN(baseclass):
                 yb = self.forward(xb)
                 self.backward(yb, tb)
                 optimizer.update(self.parameters)
-                loss += loss_func(yb, tb, average=False, metric=loss_metric)
+                loss += Lp_error(yb, tb, average=False, metric=loss_metric)
 
             history['loss'].append(loss / len(target))
             
             if val_data:
                 x_val, t_val = val_data
                 y_val = self(x_val)
-                history['val_loss'].append(loss_func(y_val, t_val, metric=loss_metric))
+                history['val_loss'].append(Lp_error(y_val, t_val, metric=loss_metric))
 
             print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
                                    for k, v in history.items() if v))
@@ -104,7 +107,7 @@ class NN(baseclass):
     def eval(self, input, target, metric='l2', average=True):
         """Compute the loss given the input and the target data."""
         output = self(input)
-        return loss_func(output, target, metric=metric, average=average)
+        return Lp_error(output, target, metric=metric, average=average)
 
     def state_dict(self):
         return self.__dict__.copy()
@@ -122,6 +125,7 @@ class NN(baseclass):
             
 class Sequential(NN):
     """Sequential neural network."""
+    activation = ActivationAccess()
 
     def __init__(self, input_dim, *layers, activation=None):
         """Construct a sequential neural network.
