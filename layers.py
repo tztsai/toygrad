@@ -205,7 +205,8 @@ class RBF(Layer):
     """Radial-basis function layer."""
     
     def __init__(self, size, *, sigma=0.1, move_centers=True,
-                 centers_mean=0, centers_deviation=1, step_size=0.01,
+                 centers_mean=0, centers_deviation=1,
+                 step_size=0.01, step_decay=0.25,
                  update_neighbors=False, nb_radius=0.05, **kwds):
         """
         Extra args:
@@ -214,6 +215,8 @@ class RBF(Layer):
             centers_mean: the mean value of the RBF centers
             centers_deviation: the standard deviation of the RBF centers
             step_size: scaling factor of the update of an RBF center
+            step_decay: linearly decrease the step size of the neighbors to be updated s.t. the step
+                size of the neighbor on the border of the neighborhood is scaled by `step_decay`
             update_neighbors: whether nodes within the winner's neighborhood will update with the winner
             nb_radius: the radius of the neighborhood
         """
@@ -222,16 +225,33 @@ class RBF(Layer):
         self.centers_mean = centers_mean
         self.centers_dev = centers_deviation
         self.step_size = step_size
+        self.step_decay = step_decay
         self.update_neighbors = update_neighbors
         self.nb_radius = nb_radius
         super().__init__(size, **kwds)
 
     def setup(self, input_dim):
         super().setup(input_dim)
+        
+        # randomly initialize RBF centers
         self.centers = Parameter(size=[self.size, input_dim],
                                  mean=self.centers_mean,
                                  scale=self.centers_dev)
-
+        
+        # compute the pair-wise distances between RBF centers
+        self._center_dist = {(i, j): self.distance(mu_i, mu_j)
+                             for i, mu_i in enumerate(self.centers)
+                             for j, mu_j in enumerate(self.centers)
+                             if i < j}
+        
+    def center_dist(self, i, j):
+        return self._center_dist[min(i, j), max(i, j)] if i != j else 0
+    
+    def neighborhood(self, i):
+        "RBF nodes in the neighborhood of node i, including itself."
+        return [j for j in range(self.size)
+                if self.center_dist(i, j) < self.nb_radius]
+        
     @staticmethod
     def distance(x, y):
         return np.sum(np.abs(x - y), axis=-1)
@@ -249,21 +269,22 @@ class RBF(Layer):
 
         # for each input point, find the "winner" - the nearest RBF center
         winners = np.argmax(self.output, axis=1)
-
+        
+        moved = {}  # record moved nodes
         for i, j in enumerate(winners):
-            nodes_to_update = {j}
-            
-            if self.update_neighbors:
-                # also update the winner's neighbors
-                neighbors = filter(
-                    lambda k: abs(self.output[i,j] - self.output[i,k]) <= self.nb_radius,
-                    range(self.size))
-                nodes_to_update.update(neighbors)
-                
-            for k in nodes_to_update:
-                # move the center nearer to the i-th input
+            for k in self.neighborhood(j):
+                # move the center k nearer to the i-th input
                 delta = self.input[i] - self.centers[k]
-                self.centers[k] += self.step_size * delta
+                decay = 1 - ((1 - self.step_decay) / self.nb_radius *
+                             self.center_dist(j, k))
+                self.centers[k] += self.step_size * decay * delta
+                moved.add(k)
+                
+        # update center distances
+        for i, mu_i in enumerate(self.centers):
+            for j, mu_j in enumerate(self.centers):
+                if i < j and (i in moved or j in moved):
+                    self._center_dist[i, j] = self.distance(mu_i, mu_j)
 
     def __repr__(self):
         repr = super().__repr__()

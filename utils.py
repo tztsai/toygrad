@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from typing import Union, Optional
 from abc import ABC as baseclass, abstractmethod
+from functools import lru_cache
 import numbers
 import tqdm
 
