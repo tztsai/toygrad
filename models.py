@@ -1,6 +1,5 @@
 import numpy as np
 import pickle
-from typing import Union, Optional
 from optimizers import Optimizer
 from functions import Loss, ActivationAccess
 from layers import Layer, Dense
@@ -35,8 +34,7 @@ class NN(baseclass):
         Returns:
             A dict of training history including loss etc.
         """
-        input = np.reshape(input, [len(input), -1])
-        target = np.reshape(target, [len(target), -1])
+        input, target = reshape2D(input), reshape2D(target)
         
         optimizer = Optimizer.get(optimizer, lr)
         loss_func = Loss.get(loss)
@@ -56,10 +54,11 @@ class NN(baseclass):
             
             loss = 0
             for xb, tb in pbar(batches):
-                yb = self.forward(xb)
-                self.backward(yb, tb)
-                optimizer.update(self.parameters)
-                loss += loss_func(yb, tb)
+                yb = self.forward(xb)               # forward pass the input
+                loss += loss_func(yb, tb)           # accumulate the loss of the output
+                eb = loss_func.backward(yb, tb)     # the error in the output layer
+                self.backward(eb)                   # backprop the error
+                optimizer.update(self.parameters)   # update parameters
 
             history['loss'].append(loss / len(target))
             
@@ -91,7 +90,7 @@ class NN(baseclass):
         raise NotImplementedError
     
     @abstractmethod
-    def backward(self, output, target):
+    def backward(self, error):
         """Back-propagate the error between the output and the target.
 
         Gradients are computed and stored for each parameter.
@@ -105,8 +104,8 @@ class NN(baseclass):
         return self.forward(input)
 
     def loss(self, input, target, loss: Union[Loss, str] = 'l2'):
-        """Compute the loss given the input and the target data."""
-        return Loss.get(loss)(self.forward(input), target)
+        """Compute the average loss given the input and the target data."""
+        return Loss.get(loss)(self.forward(input), target) / len(input)
 
     def state_dict(self):
         return self.__dict__.copy()
@@ -167,8 +166,7 @@ class Sequential(NN):
             input = output
         return output
 
-    def backward(self, output, target):
-        error = output - target
+    def backward(self, error):
         for k in reversed(range(self.depth)):
             error = self.layers[k].backward(error, pass_error=bool(k))
             if error is None: break

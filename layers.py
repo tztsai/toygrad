@@ -21,7 +21,7 @@ class Parameter(np.ndarray):
                 raise AssertionError('the size of the Parameter must be'
                                      'given for random initialization')
             if scale is None:
-                length = size[0] if hasattr(size, '__getitem__') else size
+                length = size[0] if hasattr(size, '__len__') else size
                 scale = 1 / np.sqrt(length)  # Xavier initialization
             param = np.random.normal(loc=mean, scale=scale, size=size)
             return Parameter(param)
@@ -74,8 +74,7 @@ class Layer(baseclass):
         if input_dim is not None:
             self.setup(input_dim)
             
-        self.dropout = (Dropout(p=dropout, input_dim=(self.size))
-                        if dropout else None)
+        self.dropout = Dropout(dropout, self.size) if dropout else None
 
     @abstractmethod
     def setup(self, input_dim):
@@ -101,40 +100,32 @@ class Layer(baseclass):
         raise NotImplementedError
 
     def _wrapped_forward(self, input):
-        # reshape input
-        batch = len(np.shape(input)) > 1
-        n = len(input) if batch else 1
-        input = np.reshape(input, [n, -1])
-
         # call the subclass forward method
         forward = super().__getattribute__("forward")
         output = forward(input)
-
-        # record input and output
-        self.input, self.output = input, output
 
         if self.activation:
             output = self.activation(output)
         if self.dropout:
             output = self.dropout(output)
-        if not batch:
-            output = output[0]
+
+        # record input and output
+        self.input, self.output = input, output
         return output
 
-    def _wrapped_backward(self, error, **kwds):
+    def _wrapped_backward(self, error, pass_error=True):
         # has not passed forward new input
-        if self.output is None:
-            return None
+        if self.output is None: return None
 
         # backprop the error through the dropout and the activation
         if self.dropout:
-            error = self.dropout.backward(error)
+            error *= self.dropout.backward()
         if self.activation:
             error *= self.activation.backward(self.output)
 
         # call the subclass backward method
         backward = super().__getattribute__("backward")
-        error = backward(error, **kwds)
+        error = backward(error, pass_error)
 
         # clear input and output records
         self.input = self.output = None
@@ -265,8 +256,7 @@ class RBF(Layer):
             if self.update_neighbors:
                 # also update the winner's neighbors
                 neighbors = filter(
-                    lambda k: abs(self.output[i,j] - self.output[i,k]) 
-                              <= self.nb_radius,
+                    lambda k: abs(self.output[i,j] - self.output[i,k]) <= self.nb_radius,
                     range(self.size))
                 nodes_to_update.update(neighbors)
                 

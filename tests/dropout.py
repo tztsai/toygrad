@@ -1,3 +1,4 @@
+import init
 from models import Sequential
 from layers import Dense
 from utils import onehot

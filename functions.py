@@ -26,12 +26,12 @@ class Dropout(Function):
         self._mask = None
 
     def forward(self, input):
-        mask = bernoulli(self.input_dim, 1 - self.p) / (1 - self.p)
+        mask = bernoulli(self.size, 1 - self.p) / (1 - self.p)
         self._mask = mask
         return mask * input
 
-    def backward(self, error):
-        return error * self._mask
+    def backward(self):
+        return self._mask
     
     
 class Loss(Function):
@@ -39,12 +39,16 @@ class Loss(Function):
     
     @classmethod
     def get(cls, loss):
+        """Get the Loss instance corresponding to the argument."""
         if type(loss) is str:
             loss = loss.lower()
             if loss[0] == 'l' and loss[1:].isdigit():
                 return L(int(loss[1:]))
-            elif loss in ['crossentropy', 'cross_entropy', 'cross entropy']:
+            elif loss in ['crossentropy', 'cross_entropy', 'ce']:
                 return CrossEntropy()
+            elif loss in ['softmax_crossentropy', 'softmax_ce',
+                          'softmax_cross_entropy', 'smce']:
+                return SoftMaxCE()
             else:
                 raise ValueError(f"unknown loss function: {loss}")
         elif isinstance(loss, cls):
@@ -54,46 +58,64 @@ class Loss(Function):
     
     @abstractmethod
     def forward(self, output, target):
+        """Compute the loss between the output and the target."""
         raise NotImplementedError
     
     @abstractmethod
     def backward(self, output, target):
+        """Compute the gradient of the loss w.r.t the output."""
         raise NotImplementedError
-    
-    
+
+
 class L(Loss):
-    """Standard loss function defined in the Lp space."""
+    """Loss function defined in the L^p space."""
     
-    def __init__(self, p=2, *, avg=True):
-        """The p-th power of the p-norm of the residuals.
-        If l = 2, it is the square sum of residuals;
-        if l = 1, it is the sum of absolute residuals.
+    def __init__(self, p=2):
+        """
+        Args:
+            p: the value of p in `L^p`
+                If p = 2, the loss is the square sum of residuals;
+                if p = 1, it is the sum of absolute residuals.
         """
         self.p = p
-        self.avg = avg
-        self._res = None  # record the residuals during forward
         
     def forward(self, output, target):
-        target = np.reshape(target, [len(target), -1])
-        self._res = output - target
-        
-        loss = np.sum((np.abs(self._res) if self.p % 2
-                       else self._res) ** self.p)
-        
-        if self.avg: loss /= len(output)
+        """Compute the p-th power of the p-norm of the residuals."""
+        res = output - target  # residuals
+        loss = np.sum((np.abs(res) if self.p % 2 else res) ** self.p)
         return loss
     
     def backward(self, output, target):
+        res = output - target
         if self.p % 2:
-            return (sign(self._res) if self.p == 1 else
-                    sign(self._res) * self._res ** (self.p - 1))
+            return (sign(res) if self.p == 1 else
+                    sign(res) * res ** (self.p - 1))
         else:
-            return (self._res if self.p == 2 else
-                    self._res ** (self.p - 1))
-            
+            return (res if self.p == 2 else
+                    res ** (self.p - 1))
+
 
 class CrossEntropy(Loss):
     """Cross entropy loss, usually used in classification."""
+    
+    def forward(self, output, target):
+        return - target @ np.log(output)
+    
+    def backward(self, output, target):
+        return - target / output
+    
+    
+class SoftMaxCE(Loss):
+    """Cross entropy with softmax transformation."""
+    
+    def forward(self, output, target):
+        """The output and the target should be probability distributions."""
+        exp_sum = np.sum(np.exp(output), axis=-1)
+        dot_prod = np.sum(output * target, axis=-1)
+        return np.sum(np.log(exp_sum) - dot_prod)
+    
+    def backward(self, output, target):
+        return output - target
 
 
 class Activation(Function):
@@ -165,3 +187,12 @@ class ReLU(Activation):
     def backward(self, y):
         return (y > 0).astype(np.float)
 
+
+class SoftMax(Activation):
+    def forward(self, x):
+        ex = np.exp(x)
+        return ex / np.sum(ex, axis=-1)
+    
+    def backward(self, y):
+        # TODO: fix this!
+        return np.array([])

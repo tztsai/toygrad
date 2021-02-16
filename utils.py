@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from typing import Union, Optional
 from abc import ABC as baseclass, abstractmethod
 import numbers
 import tqdm
@@ -110,6 +111,11 @@ def mesh_grid(xlim, ylim, nx=100, ny=100):
     return grid
 
 
+def reshape2D(x, batch=True):
+    n = len(x) if batch else 1
+    return np.reshape(x, [n, -1])
+
+
 def discretize(x, splits):
     """Discretize the data with the splitting points."""
     for i, p in enumerate(splits):
@@ -121,22 +127,35 @@ def discretize(x, splits):
     return x
     
 
+class Default:
+    """Change to the default value if it is set to None,
+       used as a class attribute."""
+    
+    def __init__(self, default):
+        self.default = self.value = default
+        
+    def __set__(self, obj, value):
+        if value is not None:
+            self.value = value
+        else:
+            self.value = self.default
+            
+    def __get__(self, obj, type=None):
+        return self.value
+
+
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
-    batch_size = 16
+    batch_size = Default(16)
 
     def __init__(self, *data, batch_size=None):
         self.data = data
         self.size = len(data[0])
         assert all(len(x) == self.size for x in data), \
-            'different sample sizes of data'
+            'different sizes of data'
             
-        if batch_size:
-            self.bs = batch_size
-        else:
-            self.bs = self.batch_size
-            
-        self.steps = range(0, self.size, self.bs)
+        self.batch_size = batch_size
+        self.steps = range(0, self.size, self.batch_size)
         
     def __len__(self):
         return len(self.steps)
@@ -144,7 +163,7 @@ class BatchLoader:
     def __iter__(self):
         order = np.random.permutation(self.size)
         for i in self.steps:
-            ids = order[i : i + self.bs]
+            ids = order[i : i + self.batch_size]
             yield [a[ids] for a in self.data]
 
 
@@ -210,20 +229,3 @@ def train_anim(x, y, show_data=True, splits=[0], grid_size=(200, 200)):
         anim.update(data)
 
     return callback
-
-
-class Default:
-    """Change to the default value if it is set to None,
-       used as a class attribute."""
-    
-    def __init__(self, default):
-        self.default = self.value = default
-        
-    def __set__(self, obj, value):
-        if value is not None:
-            self.value = value
-        else:
-            self.value = self.default
-            
-    def __get__(self, obj, type=None):
-        return self.value
