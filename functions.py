@@ -1,12 +1,23 @@
 import numpy as np
-from utils import sign, bernoulli, baseclass, abstractmethod
+from utils import sign, bernoulli, baseclass, abstractmethod, wraps
 
 
 class Function(baseclass):
     """A function that supports both forward and backward passes."""
     
+    def __init__(self):
+        self.forward = self.record_result(self.forward)
+        
+    def record_result(self, f):
+        _f = f  # store the original function
+        @wraps(f)
+        def call(*args, **kwds):
+            self._ret = _f(*args, **kwds)
+            return self._ret
+        return call
+    
     def __call__(self, *args, **kwds):
-        return self.forward(*args, **kwds)    
+        return self.forward(*args, **kwds)
     
     @abstractmethod
     def forward(self, *args, **kwds):
@@ -21,21 +32,25 @@ class Dropout(Function):
     """Randonly deactivates some neurons to mitigate overfitting."""
 
     def __init__(self, p, size):
+        super().__init__()
         self.p = p
         self.size = size
         self._mask = None
 
-    def forward(self, input):
+    def forward(self, x):
         mask = bernoulli(self.size, 1 - self.p) / (1 - self.p)
         self._mask = mask
-        return mask * input
+        return mask * x
 
-    def backward(self):
-        return self._mask
+    def backward(self, err):
+        return self._mask * err
     
     
 class Loss(Function):
     """Base class of loss functions."""
+
+    def __init__(self):
+        super().__init__()
     
     @classmethod
     def get(cls, loss):
@@ -57,13 +72,13 @@ class Loss(Function):
             raise ValueError(f"unknown loss function: {loss}")
     
     @abstractmethod
-    def forward(self, output, target):
-        """Compute the loss between the output and the target."""
+    def forward(self, y, t):
+        """Compute the loss between the y and the t."""
         raise NotImplementedError
     
     @abstractmethod
-    def backward(self, output, target):
-        """Compute the gradient of the loss w.r.t the output."""
+    def backward(self):
+        """Compute the gradient of the previous loss."""
         raise NotImplementedError
 
 
@@ -77,53 +92,67 @@ class L(Loss):
                 If p = 2, the loss is the square sum of residuals;
                 if p = 1, it is the sum of absolute residuals.
         """
+        super().__init__()
         self.p = p
         
-    def forward(self, output, target):
+    def forward(self, y, t):
         """Compute the p-th power of the p-norm of the residuals."""
-        res = output - target  # residuals
+        self._res = res = y - t  # residuals
         loss = np.sum((np.abs(res) if self.p % 2 else res) ** self.p)
         return loss
     
-    def backward(self, output, target):
-        res = output - target
-        if self.p % 2:
-            return (sign(res) if self.p == 1 else
-                    sign(res) * res ** (self.p - 1))
+    def backward(self):
+        if self.p == 1:
+            return sign(self._res)
+        elif self.p == 2:
+            return self._res
+        elif self.p % 2:
+            return sign(self._res) * self._res ** (self.p - 1)
         else:
-            return (res if self.p == 2 else
-                    res ** (self.p - 1))
+            return self._res ** (self.p - 1)
 
 
 class CrossEntropy(Loss):
     """Cross entropy loss, usually used in classification."""
+
+    def __init__(self):
+        super().__init__()
     
-    def forward(self, output, target):
-        return - target @ np.log(output)
+    def forward(self, y, t):
+        self._y, self._t = y, t
+        return - t @ np.log(y)
     
-    def backward(self, output, target):
-        return - target / output
+    def backward(self):
+        return - self._t / self._y
     
     
 class SoftMaxCE(Loss):
     """Cross entropy with softmax transformation."""
     
-    def forward(self, output, target):
-        """The output and the target should be probability distributions."""
-        exp_sum = np.sum(np.exp(output), axis=-1)
-        dot_prod = np.sum(output * target, axis=-1)
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, y, t):
+        """The y and the t should be probability distributions."""
+        self._y, self._t = y, t
+        y = y - np.max(y, axis=-1, keepdims=True)
+        exp_sum = np.sum(np.exp(y), axis=-1)
+        dot_prod = np.sum(y * t, axis=-1)
         return np.sum(np.log(exp_sum) - dot_prod)
     
-    def backward(self, output, target):
-        return output - target
+    def backward(self, y, t):
+        return self._y - self._t
 
 
 class Activation(Function):
-    """A nonlinear activation function."""
+    """Activation function to add nonlinearity."""
+    
+    def __init__(self):
+        super().__init__()
     
     @abstractmethod
-    def backward(self, y):
-        "Note that the value passed backward should have been activated."
+    def backward(self, error):
+        "Compute the gradient of the error w.r.t the previous output."
         raise NotImplementedError
 
     
@@ -165,34 +194,60 @@ class Linear(Activation):
 
 
 class Tanh(Activation):
+    def __init__(self):
+        super().__init__()
+    
     def forward(self, x):
         return np.tanh(x)
 
-    def backward(self, y):
-        return 1 - y**2
+    def backward(self, err):
+        return err * (1 - self._ret**2)
 
 
 class Logistic(Activation):
+    def __init__(self):
+        super().__init__()
+    
     def forward(self, x):
         return 1 / (1 + np.exp(-x))
 
-    def backward(self, y):
-        return y * (1 - y)
+    def backward(self, err):
+        return err * self._ret * (1 - self._ret)
 
 
 class ReLU(Activation):
+    def __init__(self):
+        super().__init__()
+    
     def forward(self, x):
         return np.maximum(x, 0)
 
-    def backward(self, y):
-        return (y > 0).astype(np.float)
+    def backward(self, err):
+        return err * (self._ret > 0)
 
 
 class SoftMax(Activation):
-    def forward(self, x):
-        ex = np.exp(x)
-        return ex / np.sum(ex, axis=-1)
+    def __init__(self):
+        super().__init__()
     
-    def backward(self, y):
-        # TODO: fix this!
-        return np.array([])
+    def forward(self, x):
+        ex = np.exp(x - np.max(x, axis=-1, keepdims=True))
+        return ex / np.sum(ex, axis=-1, keepdims=True)
+    
+    def backward(self, err):
+        # TODO: not correct?
+        dp = np.sum(err * self._ret, axis=-1, keepdims=True)
+        return (err - dp) * self._ret
+    
+    
+if __name__ == '__main__':
+    relu = ReLU()
+    relu(np.random.rand(10, 3) - 0.5)
+    print(relu.backward(np.random.rand(10, 3)))
+    
+    sm = SoftMax()
+    sm(np.random.rand(10, 3))
+    err = np.random.rand(10, 3)
+    for y, e, be in zip(sm._ret, err, sm.backward(err)):
+        d1 = np.diag(y) - np.outer(y, y)
+        assert (d1 @ e == be).all()

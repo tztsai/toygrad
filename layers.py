@@ -68,13 +68,21 @@ class Layer(baseclass):
         self.input = None
         self.output = None
         self.input_dim = None
+        self.model = None       # the model containing this layer
+        self._built = False     # whether the layer has been setup
         self.activation = activation
-        self._built = False  # whether the layer has been setup
         
         if input_dim is not None:
             self.setup(input_dim)
             
         self.dropout = Dropout(dropout, self.size) if dropout else None
+        
+    @property
+    def training(self):
+        if self.model is None:
+            return False
+        else:
+            return self.model.training
 
     @abstractmethod
     def setup(self, input_dim):
@@ -106,7 +114,7 @@ class Layer(baseclass):
 
         if self.activation:
             output = self.activation(output)
-        if self.dropout:
+        if self.dropout and self.training:
             output = self.dropout(output)
 
         # record input and output
@@ -119,9 +127,9 @@ class Layer(baseclass):
 
         # backprop the error through the dropout and the activation
         if self.dropout:
-            error *= self.dropout.backward()
+            error = self.dropout.backward(error)
         if self.activation:
-            error *= self.activation.backward(self.output)
+            error = self.activation.backward(error)
 
         # call the subclass backward method
         backward = super().__getattribute__("backward")
@@ -260,31 +268,40 @@ class RBF(Layer):
         return np.exp(-self.distance(x, mu)**2 / (2 * self.sigma**2))
 
     def forward(self, input):
-        return self.gaussian_rbf(input[:, None], self.centers)
-
-    def backward(self, error, pass_error=True):
-        """The RBF layer does not compute gradients nor backprop errors,
-        but it can update its centers during the backward pass."""
-        if not self.move_centers: return
+        """Compute the output and update RBF centers w.r.t the input."""
+        output = self.gaussian_rbf(input[:, None], self.centers)
+        
+        if not self.training or not self.move_centers:
+            return output  # does not move RBF centers
 
         # for each input point, find the "winner" - the nearest RBF center
-        winners = np.argmax(self.output, axis=1)
-        
-        moved = {}  # record moved nodes
+        winners = np.argmax(output, axis=1)
+
+        # find the neighbors of each winner
+        neighbors = {j: self.neighborhood(j) for j in set(winners)}
+
+        # gather all RBF nodes to be updated
+        updated = set.union(neighbors.values())
+
         for i, j in enumerate(winners):
-            for k in self.neighborhood(j):
+            for k in neighbors[j]:
                 # move the center k nearer to the i-th input
                 delta = self.input[i] - self.centers[k]
                 decay = 1 - ((1 - self.step_decay) / self.nb_radius *
                              self.center_dist(j, k))
                 self.centers[k] += self.step_size * decay * delta
-                moved.add(k)
-                
+
         # update center distances
         for i, mu_i in enumerate(self.centers):
             for j, mu_j in enumerate(self.centers):
-                if i < j and (i in moved or j in moved):
+                if i < j and (i in updated or j in updated):
                     self._center_dist[i, j] = self.distance(mu_i, mu_j)
+                    
+        return output
+
+    def backward(self, error, pass_error=True):
+        """The RBF layer does not compute gradients or backprop errors."""
+        return
 
     def __repr__(self):
         repr = super().__repr__()

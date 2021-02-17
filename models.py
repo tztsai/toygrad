@@ -8,9 +8,12 @@ from utils import *
 
 class NN(baseclass):
     """Base class of a neural network."""
+    history_length = 20  # the number of fitting histories to keep
     
     def __init__(self):
         self.parameters = []
+        self.histories = []
+        self.training = True
     
     def fit(self, input, target, *, epochs=20, lr=None, bs=None,
             optimizer: Union[str, Optimizer] = 'sgd', loss: Union[str, Loss] = 'l2', 
@@ -36,11 +39,12 @@ class NN(baseclass):
         """
         input, target = reshape2D(input), reshape2D(target)
         
+        batches = BatchLoader(input, target, batch_size=bs)
         optimizer = Optimizer.get(optimizer, lr)
         loss_func = Loss.get(loss)
         
-        batches = BatchLoader(input, target, batch_size=bs)
         history = {'loss': [], 'val_loss': []}
+        self.add_history(history)
 
         print('\nStart training', self)
         print('Input shape:', input.shape)
@@ -50,13 +54,13 @@ class NN(baseclass):
         print('Optimizer:', optimizer)
 
         for epoch in range(epochs):
-            print('\nEpoch:', epoch + 1)
+            print('\nEpoch:', epoch)
             
             loss = 0
             for xb, tb in pbar(batches):
                 yb = self.forward(xb)               # forward pass the input
                 loss += loss_func(yb, tb)           # accumulate the loss of the output
-                eb = loss_func.backward(yb, tb)     # the error in the output layer
+                eb = loss_func.backward()           # the output layer
                 self.backward(eb)                   # backprop the error
                 optimizer.update(self.parameters)   # update parameters
 
@@ -64,8 +68,7 @@ class NN(baseclass):
             
             if val_data:
                 x_val, t_val = val_data
-                y_val = self(x_val)
-                history['val_loss'].append(loss_func(y_val, t_val))
+                history['val_loss'].append(self.loss(x_val, t_val))
 
             print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
                                    for k, v in history.items() if v))
@@ -74,6 +77,11 @@ class NN(baseclass):
                 callback(self)
 
         return history
+    
+    def add_history(self, history):
+        self.histories.append(history)
+        if len(self.histories) > self.history_length:
+            self.histories.pop(0)
             
     @abstractmethod
     def forward(self, input):
@@ -102,10 +110,18 @@ class NN(baseclass):
     
     def __call__(self, input):
         return self.forward(input)
+    
+    def predict(self, input):
+        """Predict the output in the evaluation mode."""
+        training = self.training
+        self.training = False
+        output = self.forward(input)
+        self.training = training
+        return output
 
     def loss(self, input, target, loss: Union[Loss, str] = 'l2'):
         """Compute the average loss given the input and the target data."""
-        return Loss.get(loss)(self.forward(input), target) / len(input)
+        return Loss.get(loss)(self.predict(input), target) / len(input)
 
     def state_dict(self):
         return self.__dict__.copy()
@@ -153,6 +169,7 @@ class Sequential(NN):
         else:
             layer.setup(self.shape[-1])
         
+        layer.model = self
         self.layers.append(layer)
         self.shape.append(layer.size)
         self.parameters.extend(layer.parameters.values())

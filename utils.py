@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 from typing import Union, Optional
 from abc import ABC as baseclass, abstractmethod
-from functools import lru_cache
+from functools import lru_cache, wraps
 import numbers
 import tqdm
 
@@ -70,6 +70,9 @@ def join_classes(*classes, labels=None):
 
 
 def plot_dataset(points, labels, ax=plt, **kwds):
+    labels = labels.squeeze()
+    assert len(np.shape(labels)) == 1
+    
     classes = defaultdict(list)
     
     for label, point in zip(labels, points):
@@ -102,14 +105,6 @@ def onehot(x, k, *, cold=0, hot=1):
     for i, j in enumerate(x):
         m[i, j] = hot
     return m
-
-
-def mesh_grid(xlim, ylim, nx=100, ny=100):
-    """Generate a grid of points for plotting."""
-    vx = np.linspace(*xlim, num=nx)
-    vy = np.linspace(*ylim, num=ny)
-    grid = np.array([[(x, y) for x in vx] for y in vy])
-    return grid
 
 
 def reshape2D(x, batch=True):
@@ -169,9 +164,27 @@ class BatchLoader:
 
 
 class Animation:
-    """Perceptron Training Animation."""
-    time_interval = 5e-3
-
+    """Animates training."""
+    time_interval = 2e-3
+    
+    def __init__(self):
+        self.fig, self.ax = plt.subplots()
+    
+    def step(self):
+        # plt.ion()   # turn on interactive mode
+        self.fig.canvas.draw()
+        plt.pause(self.time_interval)
+        # plt.ioff()  # turn off interactive mode
+        
+    @abstractmethod
+    def update(self, data):
+        raise NotImplementedError
+        
+        
+class ImgAnim(Animation):
+    """Animates images during training."""
+    imsize = 100, 100
+    
     def __init__(self, x, y, show_data=True):
         """Initialize the animation with the training data.
 
@@ -180,53 +193,93 @@ class Animation:
             Y: the labels
         """
         assert x.shape[1] == 2
-        if len(y.shape) > 1:
-            assert y.shape[1] == 1
-            y = y.reshape(-1)
-
-        self.fig, self.ax = plt.subplots()
+        assert y.shape[1] == 1
+        assert len(x) == len(y)
+        
+        super().__init__()
 
         # plot the training data
-        if show_data:
-            plot_dataset(x, y, self.ax)
-            self.ax.autoscale()
-            self.xlim = self.ax.get_xlim()
-            self.ylim = self.ax.get_ylim()
-        else:
-            self.xlim, self.ylim = zip(np.min(x, axis=0), np.max(x, axis=0))
+        data_plt = plot_dataset(x, y, self.ax)
+        self.ax.autoscale()
+        self.xlim = self.ax.get_xlim()
+        self.ylim = self.ax.get_ylim()
+        
+        if not show_data:
+            data_plt.remove()
 
-        self.im = self.ax.imshow([[0]], origin='lower',
+        self.im = self.ax.imshow(np.zeros(self.imsize),
+                                 origin='lower',
                                  interpolation='bilinear',
                                  extent=[*self.xlim, *self.ylim])
-
+        
     def update(self, data):
         self.im.set_clim(np.min(data), np.max(data))
         self.im.set_data(data)
+        self.step()
 
-        plt.ion()   # turn on interactive mode
-        self.fig.canvas.draw()
-        plt.pause(self.time_interval)
-        plt.ioff()  # turn off interactive mode
+class CurveAnim(Animation):
+    """Animates performance curves during training."""
+    
+    def __init__(self, labels=['loss']):
+        super().__init__()
+        self.ax.set_xlabel('epoch')
+        
+        self.plots = []
+        for label in labels:
+            self.plots.extend(self.ax.plot([], label=label))
+            
+    def update(self, *curves):
+        assert len(curves) == len(self.plots), \
+            'incorrect number of curves'
+            
+        for curve, plot in zip(curves, self.plots):
+            plot.set_xdata(np.arange(len(curve)))
+            plot.set_ydata(curve)
+            
+        self.step()
 
 
-def train_anim(x, y, show_data=True, splits=[0], grid_size=(200, 200)):
-    """Enables animation during the neural network training.
+def mesh_grid(xlim, ylim, size=(100, 100)):
+    """Generate a grid of points for plotting."""
+    vx = np.linspace(*xlim, num=size[0])
+    vy = np.linspace(*ylim, num=size[1])
+    grid = np.array([[(x, y) for x in vx] for y in vy])
+    return grid
+
+
+def pred_anim(x, y, show_data=True, splits=[]):
+    """Animates the predictions during NN training.
     
     Args:
         x, y: the training data
         show_data: whether to display the training data in the animation
         splits: a list of points to discretize the output
-        grid_size: a 2-tuple specifying the resolution of the animation
         
     Returns:
         A callback of NN.fit.
     """
-    anim = Animation(x, y, show_data)
-    grid = mesh_grid(anim.xlim, anim.ylim, *grid_size)
+    anim = ImgAnim(x, y, show_data)
+    grid = mesh_grid(anim.xlim, anim.ylim, ImgAnim.imsize)
     
     def callback(nn):
         data = np.array([nn(row).squeeze() for row in grid])
         data = discretize(data, splits)
         anim.update(data)
 
+    return callback
+
+
+def hist_anim():
+    """Animates the training history of the NN."""
+    anim = None
+    
+    def callback(nn):
+        nonlocal anim
+        history = nn.histories[-1]
+        
+        if anim is None:
+            anim = CurveAnim(history.keys())
+            
+        anim.update(*history.values())
+        
     return callback
