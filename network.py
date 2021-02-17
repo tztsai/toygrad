@@ -1,94 +1,25 @@
 import numpy as np
 import pickle
 from optimizers import Optimizer
-from functions import Loss, ActivationAccess
-from layers import Layer, Dense
+from loss import Loss
+from node import Layer, Dense
 from utils import *
 
 
-class NN(baseclass):
+class Network:
     """Base class of a neural network."""
     history_length = 20  # the number of fitting histories to keep
-    
-    def __init__(self):
+
+    def __init__(self, nodes):
+        self. = graph
         self.parameters = []
-        self.histories = []
         self.training = True
-    
-    def fit(self, input, target, *, epochs=20, lr=None, bs=None,
-            optimizer: Union[str, Optimizer] = 'sgd', loss: Union[str, Loss] = 'l2', 
-            val_data: Optional[list] = None, callbacks: list = ()) -> dict:
-        """Given the input data, train the parameters to fit the target data.
-        
-        Args:
-            input: an array of input data - if 1D, then each point is a number;
-                if 2D, then each point is a row vector in the array
-            target: an array of target or label data - if 1D, then each point is a number;
-                if 2D, then each point is a row vector in the array
-            epochs: number of epochs to train  
-            lr: learning rate, use lr of the optimizer by default
-            bs: batch size, use bs of BatchLoader by default
-            optimizer (Optimizer): optimizer of the parameters  
-            loss: the metric to measure the training loss (does not affect backprop!)
-            val_data: validation data in the form of (x_val, t_val)  
-            callbacks (list of function): functions to be called at the end of each epoch,
-                each function taking the NN object as input
-                
-        Returns:
-            A dict of training history including loss etc.
-        """
-        input, target = reshape2D(input), reshape2D(target)
-        
-        batches = BatchLoader(input, target, batch_size=bs)
-        optimizer = Optimizer.get(optimizer, lr)
-        loss_func = Loss.get(loss)
-        
-        history = {'loss': [], 'val_loss': []}
-        self.add_history(history)
 
-        print('\nStart training', self)
-        print('Input shape:', input.shape)
-        print('Target shape:', target.shape)
-        print('Total epochs:', epochs)
-        print('Batch size:', batches.batch_size)
-        print('Optimizer:', optimizer)
-
-        for epoch in range(epochs):
-            print('\nEpoch:', epoch)
-            
-            loss = 0
-            for xb, tb in pbar(batches):
-                yb = self.forward(xb)               # forward pass the input
-                loss += loss_func(yb, tb)           # accumulate the loss of the output
-                eb = loss_func.backward()           # the output layer
-                self.backward(eb)                   # backprop the error
-                optimizer.update(self.parameters)   # update parameters
-
-            history['loss'].append(loss / len(target))
-            
-            if val_data:
-                x_val, t_val = val_data
-                history['val_loss'].append(self.loss(x_val, t_val))
-
-            print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
-                                   for k, v in history.items() if v))
-
-            for callback in callbacks:
-                callback(self)
-
-        return history
-    
-    def add_history(self, history):
-        self.histories.append(history)
-        if len(self.histories) > self.history_length:
-            self.histories.pop(0)
-            
-    @abstractmethod
     def forward(self, input):
         """Receive the input and compute the output.
 
         Parameters should not be updated in this method.
-        
+
         Args:
             input: an input vector or matrix
 
@@ -96,8 +27,7 @@ class NN(baseclass):
             An output vector or matrix.
         """
         raise NotImplementedError
-    
-    @abstractmethod
+
     def backward(self, error):
         """Back-propagate the error between the output and the target.
 
@@ -107,10 +37,10 @@ class NN(baseclass):
             The loss of the output with regard to the target.
         """
         raise NotImplementedError
-    
+
     def __call__(self, input):
         return self.forward(input)
-    
+
     def predict(self, input):
         """Predict the output in the evaluation mode."""
         training = self.training
@@ -122,21 +52,23 @@ class NN(baseclass):
     def loss(self, input, target, loss: Union[Loss, str] = 'l2'):
         """Compute the average loss given the input and the target data."""
         return Loss.get(loss)(self.predict(input), target) / len(input)
+    
+    def add(self, node)
 
     def state_dict(self):
         return self.__dict__.copy()
-        
+
     def save(self, filename):
         with open(filename, 'wb') as f:
             pickle.dump(self.state_dict(), f)
-        
+
     def load(self, filename):
         with open(filename, 'rb') as f:
             state = pickle.load(f)
         for attr in state:
             setattr(self, attr, state[attr])
-            
-            
+
+
 class Sequential(NN):
     """Sequential neural network."""
     activation = ActivationAccess()
@@ -157,18 +89,18 @@ class Sequential(NN):
             self.add(Dense(layer)
                      if isinstance(layer, numbers.Integral)
                      else layer)
-        
+
     @property
     def depth(self):
         return len(self.layers)
-        
+
     def add(self, layer: Layer):
         if layer._built:
             assert layer.input_dim == self.shape[-1], \
                 "cannot match the input dimensionality of %s" % layer
         else:
             layer.setup(self.shape[-1])
-        
+
         layer.model = self
         self.layers.append(layer)
         self.shape.append(layer.size)
@@ -176,7 +108,7 @@ class Sequential(NN):
 
         if layer.activation is False:
             layer.activation = self.activation
-    
+
     def forward(self, input, start_layer=0):
         for k in range(start_layer, self.depth):
             output = self.layers[k].forward(input)
@@ -187,7 +119,7 @@ class Sequential(NN):
         for k in reversed(range(self.depth)):
             error = self.layers[k].backward(error, pass_error=bool(k))
             if error is None: break
-            
+
     def step(self, input, target):
         output = self.forward(input)
         self.backward(output, target)
@@ -195,11 +127,68 @@ class Sequential(NN):
     def __repr__(self):
         layers_repr = ', '.join(map(repr, self.layers))
         return f'Sequential({self.shape[0]}, {layers_repr})'
-    
-    
-class Convolutional(NN):
-    """Convolutional neural network."""
-    
-    
-class Recurrent(NN):
-    """Recurrent neural network."""
+
+
+def train(model: Network, input, target, *, epochs=20, lr=None, bs=None,
+          optimizer: Union[str, Optimizer] = 'sgd', loss: Union[str, Loss] = 'l2',
+          val_data: Optional[list] = None, callbacks: list = ()) -> dict:
+    """Given the input data, train the parameters to fit the target data.
+
+        Args:
+            input: an array of input data - if 1D, then each point is a number;
+                if 2D, then each point is a row vector in the array
+            target: an array of target or label data - if 1D, then each point is a number;
+                if 2D, then each point is a row vector in the array
+            epochs: number of epochs to train
+            lr: learning rate, use lr of the optimizer by default
+            bs: batch size, use bs of BatchLoader by default
+            optimizer (Optimizer): optimizer of the parameters
+            loss: the metric to measure the training loss (does not affect backprop!)
+            val_data: validation data in the form of (x_val, t_val)
+            callbacks (list of function): functions to be called at the end of each epoch,
+                each function taking the NN object as input
+
+        Returns:
+            A dict of training history including loss etc.
+        """
+    input, target = reshape2D(input), reshape2D(target)
+
+    batches = BatchLoader(input, target, batch_size=bs)
+    optimizer = Optimizer.get(optimizer, lr)
+    loss_func = Loss.get(loss)
+
+    history = {'loss': [], 'val_loss': []}
+    self.add_history(history)
+
+    print('\nStart training', self)
+    print('Input shape:', input.shape)
+    print('Target shape:', target.shape)
+    print('Total epochs:', epochs)
+     print('Batch size:', batches.batch_size)
+      print('Optimizer:', optimizer)
+
+       for epoch in range(epochs):
+            print('\nEpoch:', epoch)
+
+            loss = 0
+            for xb, tb in pbar(batches):
+                yb = self.forward(xb)               # forward pass the input
+                # accumulate the loss of the output
+                loss += loss_func(yb, tb)
+                eb = loss_func.backward()           # the output layer
+                self.backward(eb)                   # backprop the error
+                optimizer.update(self.parameters)   # update parameters
+
+            history['loss'].append(loss / len(target))
+
+            if val_data:
+                x_val, t_val = val_data
+                history['val_loss'].append(self.loss(x_val, t_val))
+
+            print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
+                                   for k, v in history.items() if v))
+
+            for callback in callbacks:
+                callback(locals())
+
+        return history
