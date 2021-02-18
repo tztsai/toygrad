@@ -1,41 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from collections import defaultdict
-from typing import Union, Optional, List
-from abc import abstractmethod
-from functools import lru_cache, wraps
-from contextlib import contextmanager
-from copy import deepcopy
 import numbers
 import tqdm
+from devtools import *
 
-
-INFO = 2
-DEBUG = 1
-VISIBLE_LEVEL = INFO
-LOG_LEVEL = INFO
 
 SEED = 1
 np.random.seed(SEED)
 
-
-def setloglevel(level: str):
-    if type(level) is str:
-        d = {'info': INFO, 'debug': DEBUG}
-        level = d[level.lower()]
-    else:
-        raise TypeError('log level is not a string')
-    global LOG_LEVEL
-    LOG_LEVEL = level
-
-
-_print = print
-
-def print(*msgs, **kwds):
-    """Override the builtin print function."""
-    if VISIBLE_LEVEL <= LOG_LEVEL:
-        _print(*msgs, **kwds)
-        
         
 def bernoulli(size, p=0.5):
     if len(np.shape(size)) == 0:
@@ -100,12 +72,6 @@ def plot_history(history, *args, title=None, **kwds):
     ax.set_title(title)
     ax.legend()
     
-    
-def pbar(iterable, **kwds):
-    """A process bar."""
-    if LOG_LEVEL < VISIBLE_LEVEL: return iterable
-    return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
-
 
 def onehot(x, k, *, cold=0, hot=1):
     m = np.full((len(x), k), cold, dtype=np.int)
@@ -129,67 +95,7 @@ def discretize(x, splits):
             x[x > p] = i + 1
     return x
     
-
-# class Default:
-#     """Change to the default value if it is set to None,
-#        used as a class attribute."""
-    
-#     def __init__(self, default):
-#         self.default = self.value = default
         
-#     def __set__(self, obj, value):
-#         self.value = self.default if value is None else value
-            
-#     def __get__(self, obj, type=None):
-#         return self.value
-    
-    
-def none_for_default(cls):
-    """A class decorator that makes instances get the class attribute if an
-       instance attribute is None and the corresponding class attribute exists."""
-
-    # keep the original __getattribute__ method
-    getattribute = cls.__getattribute__
-    
-    def get(self, name):
-        value = getattribute(self, name)
-        if value is None and hasattr(type(self), name):
-            return getattr(type(self), name)  # get the class attribute
-        return value
-    
-    cls.__getattribute__ = get
-    return cls
-    
-    
-def name2obj(parser):
-    """A metaclass factory that allows classes to instantiate subclasses by names.
-    
-    Args:
-        parser: a function that accepts a str and returns a class to instantiate
-    """
-    
-    class Meta(type):
-        def __call__(self, *args, **kwds):
-            cln = self.__name__
-            if type(self.__base__) is Meta:  # a subclass of the created class
-                obj = object.__new__(self)
-                obj.__init__(*args, **kwds)
-                return obj  # initialize as usual
-            elif len(args) < 1:
-                raise TypeError(f'{cln}() takes at least 1 argument')
-            elif type(obj := args[0]) is str:
-                cls, *args = parser(obj.lower(), *args[1:])
-                obj = object.__new__(cls)
-                obj.__init__(*args)
-                return obj
-            elif isinstance(obj, self):
-                return obj
-            else:
-                raise TypeError(f'{cln}() argument 1 must be str or {cln}')
-            
-    return Meta
-    
-    
 @none_for_default
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""

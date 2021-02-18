@@ -1,9 +1,9 @@
 from node import Node
 import numpy as np
-from utils import name2obj
+from utils import make_meta
 
 
-def get_activation(name):
+def get_activation(name: str):
     if name == 'tanh':
         return Tanh
     elif name in ['logistic', 'sigmoid']:
@@ -18,7 +18,7 @@ def get_activation(name):
         raise ValueError(f"unknown activation function: {name}")
 
 
-class Activation(Node, metaclass=name2obj(get_activation)):
+class Activation(Node, metaclass=make_meta(get_activation)):
     def setup(self):
         super().setup()
         self.dim_out = self.dim_in
@@ -61,7 +61,7 @@ class SoftMax(Activation):
 
 if __name__ == '__main__':
     sigma = Activation('tanh')
-    sigma(2)
+    print(sigma(2))
 
     relu = ReLU()
     relu(np.random.rand(10, 3) - 0.5)

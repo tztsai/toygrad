@@ -1,5 +1,6 @@
 from function import Function
 from utils import *
+from devtools import *
 
 
 class Node(Function):
@@ -12,6 +13,7 @@ class Node(Function):
             dim_out: the dimensionality of the output
             dim_in: the dimensionality of the input
         """
+        super().__init__()
         self.dim_out = dim_out
         self.dim_in = dim_in
         self.output = None
@@ -63,7 +65,7 @@ class Node(Function):
     def backward(self, *error):
         raise NotImplementedError
     
-    def match_io(self, data, nodes):
+    def match_io(self, nodes, data):
         if not nodes:
             return ()
         elif len(nodes) == 1:
@@ -74,10 +76,8 @@ class Node(Function):
             return zip(nodes, data)
 
     def _wrapped_forward(self, *input):
-        # call the subclass forward method
-        forward = super().__getattribute__("forward")
-        output = forward(*input)
-        print(output)
+        # call the inner forward method
+        output = self._forward(*input)
         
         # record input and output
         if len(input) == 1: input = input[0]
@@ -86,18 +86,18 @@ class Node(Function):
         # pass forward the output
         for node, out in self.match_io(self.descendants, output):
             node.forward(out)
+            
+        return output
 
     def _wrapped_backward(self, *error):
-        if not self.training:
-            print('Warning: calling backward but the network is not in training mode')
-            return
-        
         # has not passed forward new input
         if self.output is None: return
+        
+        # backward is blocked by a descendant
+        if any(e is None for e in error): return
 
-        # call the subclass backward method
-        backward = super().__getattribute__("backward")
-        error = backward(*error)
+        # call the inner backward method
+        error = self._backward(*error)
 
         # clear input and output records
         self.input = self.output = None
@@ -105,6 +105,8 @@ class Node(Function):
         # pass backward the error
         for node, err in self.match_io(self.ascendants, error):
             node.backward(err)
+            
+        return error
 
     def __setattr__(self, name, value):
         "Automatically keeps track of trainable parameters."
@@ -133,6 +135,8 @@ class Node(Function):
 
 class Parameter(np.ndarray):
     """A trainable parameter in a node."""
+    
+    grad_lim = 1e8  # limit of the magnitude of each element of the gradient
 
     def __new__(cls, value=None, *, size=None, mean=0, scale=None):
         """Create a new Parameter.
@@ -140,6 +144,7 @@ class Parameter(np.ndarray):
         If `value` is given, then it will be converted to a Parameter.
         However, if `size` is additionally specified, then a new Parameter
         of this size will be created filled with the given `value`.
+        
         If `value` is not given, then `size` must be provided to generate
         a random Parameter following Gaussian distribution. Additionally,
         `mean` and `scale` of the Gaussian can be specified.
@@ -148,11 +153,14 @@ class Parameter(np.ndarray):
             if size is None:
                 raise AssertionError('the size of the Parameter must be'
                                      'given for random initialization')
+                
             if scale is None:
                 length = size[0] if hasattr(size, '__len__') else size
                 scale = 1 / np.sqrt(length)  # Xavier initialization
+                
             param = np.random.normal(loc=mean, scale=scale, size=size)
             return Parameter(param)
+        
         else:  # convert the value to an array
             if size is not None:  # fill an array of the given size
                 value = np.full(size, value)
@@ -167,7 +175,7 @@ class Parameter(np.ndarray):
 
     @grad.setter
     def grad(self, value):
-        self._grad = value
+        self._grad = np.clip(value, -self.grad_lim, self.grad_lim)
         self._dirty = True
 
     def zero_grad(self):
@@ -230,10 +238,10 @@ class Affine(Node):
         super().__init__(dim_out, dim_in)
         self.with_bias = with_bias
 
-    def setup(self, input_dim):
-        super().setup(input_dim)
-        # coefficients of the layer's affine transformation
-        self.weights = Parameter(size=[input_dim + self.with_bias, self.size])
+    def setup(self):
+        super().setup()
+        # coefficients of the affine transformation
+        self.weights = Parameter(size=[self.dim_in + self.with_bias, self.dim_out])
 
     def forward(self, input):
         if self.with_bias:
@@ -243,13 +251,14 @@ class Affine(Node):
             return input @ self.weights
 
     def backward(self, error):
-        grad = self.input.T @ error
-        if self.with_bias:  # insert the gradient of bias
-            grad_b = np.sum(error, axis=0)
-            grad = np.insert(grad, 0, grad_b, axis=0)
+        if self.training:
+            grad = self.input.T @ error
+            
+            if self.with_bias:  # insert the gradient of bias
+                grad_b = np.sum(error, axis=0)
+                grad = np.insert(grad, 0, grad_b, axis=0)
 
-        # limit the magnitude of gradient
-        self.weights.grad += grad  # np.clip(grad, -1e6, 1e6)
+            self.weights.grad += grad
 
         if self.ascendants:
             # return the error passed to the previous layer

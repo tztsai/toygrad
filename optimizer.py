@@ -1,7 +1,8 @@
-from utils import abstractmethod, none_for_default, name2obj
+from devtools import *
 
 
-def get_optimizer(name):
+@parse_name
+def get_optimizer(name: str):
     if name == 'sgd':
         return SGD
     elif name == 'adam':
@@ -11,7 +12,7 @@ def get_optimizer(name):
 
 
 @none_for_default
-class Optimizer(metaclass=name2obj(get_optimizer)):
+class Optimizer(metaclass=make_meta(get_optimizer)):
     """Base class of an optimizer."""
     learning_rate = 1e-2
     
@@ -52,10 +53,10 @@ class SGD(Optimizer):
 
 
 if __name__ == '__main__':
-    print(Optimizer('sgd'))
+    print(Optimizer('SGD'))
     sgd = SGD(0.1, 0.2)
     print(sgd)
     sgd.momentum = None
     print(sgd)
-    print(Optimizer(None))
+    # print(Optimizer())
     print(Optimizer('sgd', 2))

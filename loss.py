@@ -1,29 +1,27 @@
 from function import Function
-from utils import np, name2obj, sign, abstractmethod
+from utils import np, sign
+from devtools import *
 
 
-def get_loss(name, avg=True):
+def get_loss(name: str):
     if name[0] == 'l' and name[1:].isdigit():
         try:
             p = int(name[1:])
         except ValueError:
             raise ValueError(f"unknown loss function: {name}")
-        return L, p, avg
+        return L, p
     elif name in ['crossentropy', 'cross_entropy', 'ce']:
-        return CrossEntropy, avg
+        return CrossEntropy
     elif name in ['softmax_crossentropy', 'softmax_ce',
-                'softmax_cross_entropy', 'smce']:
-        return SoftMaxCrossEntropy, avg
+                  'softmax_cross_entropy', 'smce']:
+        return SoftMaxCrossEntropy
     else:
         raise ValueError(f"unknown loss function: {name}")
 
 
-class Loss(Function, metaclass=name2obj(get_loss)):
+class Loss(Function, metaclass=make_meta(get_loss)):
     """Base class of loss functions."""
     
-    def __init__(self, avg=True):
-        self.avg = avg
-        
     @abstractmethod
     def forward(self, y, t):
         """Compute the loss between the output `y` and the target `t`."""
@@ -45,6 +43,7 @@ class L(Loss):
                 If p = 2, the loss is the square sum of residuals;
                 if p = 1, it is the sum of absolute residuals.
         """
+        super().__init__()
         self.p = p
 
     def forward(self, y, t):
