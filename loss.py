@@ -2,25 +2,39 @@ from function import Function
 from utils import *
 
 
-class Loss(Function):
-    """Base class of loss functions."""
-
-    def __new__(cls, obj):
-        if type(obj) is str:
+class LossMeta(type):
+    def __call__(self, *args, **kwds):
+        if self is not Loss:
+            loss = object.__new__(self)
+            loss.__init__(*args, **kwds)
+            return loss
+        elif len(args) != 1 or kwds:
+            raise TypeError("Loss() takes a single argument")
+        elif type(obj := args[0]) is str:
             s = obj.lower()
             if s[0] == 'l' and s[1:].isdigit():
-                return L(int(s[1:]))
+                loss = object.__new__(L)
+                try:
+                    p = int(s[1:])
+                except ValueError:
+                    raise ValueError(f"unknown loss function: {obj}")
+                loss.__init__(p)
+                return loss
             elif s in ['crossentropy', 'cross_entropy', 'ce']:
-                return CrossEntropy()
+                return object.__new__(CrossEntropy)
             elif s in ['softmax_crossentropy', 'softmax_ce',
                        'softmax_cross_entropy', 'smce']:
-                return SoftMaxCrossEntropy()
+                return object.__new__(SoftMaxCrossEntropy)
             else:
                 raise ValueError(f"unknown loss function: {obj}")
-        elif isinstance(obj, cls):  # already an instance of Loss
+        elif isinstance(obj, Loss):
             return obj
         else:
-            raise ValueError(f"unknown loss function: {obj}")
+            raise TypeError(f"Loss() argument 1 must be str or Loss")
+
+
+class Loss(Function, metaclass=LossMeta):
+    """Base class of loss functions."""
 
     @abstractmethod
     def forward(self, y, t):
@@ -43,7 +57,6 @@ class L(Loss):
                 If p = 2, the loss is the square sum of residuals;
                 if p = 1, it is the sum of absolute residuals.
         """
-        super().__init__()
         self.p = p
 
     def forward(self, y, t):

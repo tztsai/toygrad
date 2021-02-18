@@ -1,15 +1,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
-from typing import Union, Optional
-from abc import ABC as baseclass, abstractmethod
+from typing import Union, Optional, List
+from abc import abstractmethod
 from functools import lru_cache, wraps
+from copy import deepcopy
 import numbers
 import tqdm
 
+
 INFO = 2
 DEBUG = 1
-DISPLAY_LEVEL = INFO
+VISIBLE_LEVEL = INFO
 LOG_LEVEL = INFO
 
 SEED = 1
@@ -30,7 +32,7 @@ _print = print
 
 def print(*msgs, **kwds):
     """Override the builtin print function."""
-    if LOG_LEVEL == DISPLAY_LEVEL:
+    if VISIBLE_LEVEL <= LOG_LEVEL:
         _print(*msgs, **kwds)
         
         
@@ -45,6 +47,10 @@ def gaussian(size, mu=0, sigma=1):
     for m, s in np.broadcast(mu, sigma):
         data.append(np.random.normal(loc=m, scale=s, size=size))
     return np.array(data).T
+
+
+def dim(x):
+    return len(np.shape(x))
 
 
 def sign(x, eps=1e-15):
@@ -96,7 +102,7 @@ def plot_history(history, *args, title=None, **kwds):
     
 def pbar(iterable, **kwds):
     """A process bar."""
-    if LOG_LEVEL < DISPLAY_LEVEL: return iterable
+    if LOG_LEVEL < VISIBLE_LEVEL: return iterable
     return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
 
 
@@ -123,26 +129,62 @@ def discretize(x, splits):
     return x
     
 
-class Default:
-    """Change to the default value if it is set to None,
-       used as a class attribute."""
+# class Default:
+#     """Change to the default value if it is set to None,
+#        used as a class attribute."""
     
-    def __init__(self, default):
-        self.default = self.value = default
+#     def __init__(self, default):
+#         self.default = self.value = default
         
-    def __set__(self, obj, value):
-        if value is not None:
-            self.value = value
-        else:
-            self.value = self.default
+#     def __set__(self, obj, value):
+#         self.value = self.default if value is None else value
             
-    def __get__(self, obj, type=None):
-        return self.value
-
-
+#     def __get__(self, obj, type=None):
+#         return self.value
+    
+    
+def none_for_default(cls):
+    """A class decorator that makes instances get the class attribute if an
+       instance attribute is None and the corresponding class attribute exists."""
+       
+    getattribute = cls.__getattribute__
+    
+    def get(self, name):
+        value = getattribute(self, name)
+        if value is None and name in dir(type(self)):
+            return getattr(type(self), name)
+        return value
+    
+    cls.__getattribute__ = get
+    return cls
+    
+    
+def name2obj(parser):
+    """A metaclass factory that allows classes to instantiate subclasses by names."""
+    
+    class Meta(type):
+        def __call__(self, *args, **kwds):
+            cln = self.__name__
+            if type(self.__base__) is Meta:
+                obj = object.__new__(self)
+                obj.__init__(*args, **kwds)
+                return obj
+            elif len(args) != 1 or kwds:
+                raise TypeError(f'{cln}() takes 1 argument')
+            elif type(obj := args[0]) is str:
+                return parser(obj.lower())
+            elif isinstance(obj, self):
+                return obj
+            else:
+                raise TypeError(f'{cln}() argument 1 must be str or {cln}')
+            
+    return Meta
+    
+    
+@none_for_default
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
-    batch_size = Default(16)
+    batch_size = 16
 
     def __init__(self, *data, batch_size=None):
         self.data = data
@@ -261,8 +303,9 @@ def pred_anim(x, y, show_data=True, splits=[]):
     anim = ImgAnim(x, y, show_data)
     grid = mesh_grid(anim.xlim, anim.ylim, ImgAnim.imsize)
     
-    def callback(nn):
-        data = np.array([nn(row).squeeze() for row in grid])
+    def callback(env):
+        model = env['model']
+        data = np.array([model(row).squeeze() for row in grid])
         data = discretize(data, splits)
         anim.update(data)
 
@@ -273,9 +316,9 @@ def hist_anim():
     """Animates the training history of the NN."""
     anim = None
     
-    def callback(nn):
+    def callback(env):
         nonlocal anim
-        history = nn.histories[-1]
+        history = env['history']
         
         if anim is None:
             anim = CurveAnim(history.keys())

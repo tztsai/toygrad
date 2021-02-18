@@ -1,7 +1,7 @@
 from utils import abstractmethod
 
 
-class Function(baseclass):
+class Function:
     """Base class of functions that implement forward and backward."""
     
     @abstractmethod
@@ -14,6 +14,6 @@ class Function(baseclass):
         """Back-propagate the error."""
         raise NotImplementedError
 
-    def __call__(self, input):
-        return self.forward(input)
+    def __call__(self, *args, **kwds):
+        return self.forward(*args, **kwds)
     

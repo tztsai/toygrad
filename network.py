@@ -1,45 +1,35 @@
 import numpy as np
 import pickle
 from optimizers import Optimizer
+from function import Function
 from loss import Loss
-from node import Layer, Dense
+from node import Node
 from utils import *
 
 
-class Network:
-    """Base class of a neural network."""
-    history_length = 20  # the number of fitting histories to keep
+class Network(Function):
+    """Base class of a neural network.
+    
+    Two modes:
+        training: gradients are recorded and parameters can be updated
+        evaluation: the network only computes the output
+    """
 
-    def __init__(self, nodes):
-        self. = graph
-        self.parameters = []
+    def __init__(self, entry=None):
+        self.entry = entry
+        self.exit = None
+        self.nodes = set()
+        self.parameters = set()
         self.training = True
+        
+        if entry: self.add(entry)
 
     def forward(self, input):
-        """Receive the input and compute the output.
-
-        Parameters should not be updated in this method.
-
-        Args:
-            input: an input vector or matrix
-
-        Returns:
-            An output vector or matrix.
-        """
+        """Receive the input and compute the output."""
         raise NotImplementedError
 
     def backward(self, error):
-        """Back-propagate the error between the output and the target.
-
-        Gradients are computed and stored for each parameter.
-
-        Returns:
-            The loss of the output with regard to the target.
-        """
-        raise NotImplementedError
-
-    def __call__(self, input):
-        return self.forward(input)
+        """If in the training mode, propagates back the error and computes parameters' gradients."""
 
     def predict(self, input):
         """Predict the output in the evaluation mode."""
@@ -51,9 +41,10 @@ class Network:
 
     def loss(self, input, target, loss: Union[Loss, str] = 'l2'):
         """Compute the average loss given the input and the target data."""
-        return Loss.get(loss)(self.predict(input), target) / len(input)
+        return Loss(loss)(self.predict(input), target) / len(input)
     
-    def add(self, node)
+    def add(self, node):
+        self.parameters.extend(node.parameters.values())
 
     def state_dict(self):
         return self.__dict__.copy()
@@ -71,24 +62,6 @@ class Network:
 
 class Sequential(NN):
     """Sequential neural network."""
-    activation = ActivationAccess()
-
-    def __init__(self, input_dim, *layers, activation=None):
-        """Construct a sequential neural network.
-
-        Args:
-            input_dim: dimension of input
-            layers: a sequence of layers. A dense layer can be input as an int which is its size.
-            activation (optional): the default activation of layers
-        """
-        super().__init__()
-        self.shape = [input_dim]
-        self.layers = []
-        self.activation = activation
-        for layer in layers:
-            self.add(Dense(layer)
-                     if isinstance(layer, numbers.Integral)
-                     else layer)
 
     @property
     def depth(self):
@@ -149,46 +122,44 @@ def train(model: Network, input, target, *, epochs=20, lr=None, bs=None,
                 each function taking the NN object as input
 
         Returns:
-            A dict of training history including loss etc.
-        """
+            A dict of training history including losses etc.
+    """
     input, target = reshape2D(input), reshape2D(target)
 
     batches = BatchLoader(input, target, batch_size=bs)
-    optimizer = Optimizer.get(optimizer, lr)
-    loss_func = Loss.get(loss)
-
+    optimizer = Optimizer(optimizer, lr)
+    loss_func = Loss(loss)
     history = {'loss': [], 'val_loss': []}
-    self.add_history(history)
 
-    print('\nStart training', self)
+    print('\nStart training', model)
     print('Input shape:', input.shape)
     print('Target shape:', target.shape)
     print('Total epochs:', epochs)
-     print('Batch size:', batches.batch_size)
-      print('Optimizer:', optimizer)
+    print('Batch size:', batches.batch_size)
+    print('Optimizer:', optimizer)
 
-       for epoch in range(epochs):
-            print('\nEpoch:', epoch)
+    for epoch in range(epochs):
+        print('\nEpoch:', epoch)
 
-            loss = 0
-            for xb, tb in pbar(batches):
-                yb = self.forward(xb)               # forward pass the input
-                # accumulate the loss of the output
-                loss += loss_func(yb, tb)
-                eb = loss_func.backward()           # the output layer
-                self.backward(eb)                   # backprop the error
-                optimizer.update(self.parameters)   # update parameters
+        loss = 0
+        for xb, tb in pbar(batches):
+            yb = model.forward(xb)               # forward pass the input
+            # accumulate the loss of the output
+            loss += loss_func(yb, tb)
+            eb = loss_func.backward()           # the output layer
+            model.backward(eb)                   # backprop the error
+            optimizer.update(model.parameters)   # update parameters
 
-            history['loss'].append(loss / len(target))
+        history['loss'].append(loss / len(target))
 
-            if val_data:
-                x_val, t_val = val_data
-                history['val_loss'].append(self.loss(x_val, t_val))
+        if val_data:
+            x_val, t_val = val_data
+            history['val_loss'].append(model.loss(x_val, t_val))
 
-            print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
-                                   for k, v in history.items() if v))
+        print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
+                                for k, v in history.items() if v))
 
-            for callback in callbacks:
-                callback(locals())
+        for callback in callbacks:
+            callback(locals())
 
-        return history
+    return history

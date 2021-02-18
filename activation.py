@@ -1,9 +1,12 @@
-# from node import Node
+from node import Node
 import numpy as np
 
 
-class Activation:
-    def __new__(cls, obj):
+class ActivationMeta(type):
+    def __call__(self, *args, **kwds):
+        if self is not Optimizer:
+            opt = object.__new__(self)
+            opt.__init__(*args, **kwds) 
         if type(obj) is str:
             s = obj.lower()
             if s == 'tanh':
@@ -21,7 +24,42 @@ class Activation:
         elif not obj:
             return None
         else:
-            raise ValueError(f"unknown activation function: {obj}")
+            raise TypeError(f"Activation() argument 1 must be str or Activation")
+
+
+class Tanh(Node):
+    def forward(self, x):
+        return np.tanh(x)
+
+    def backward(self, error):
+        return error * (1 - self.output**2)
+
+
+class Logistic(Node):
+    def forward(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def backward(self, error):
+        return error * self.output * (1 - self.output)
+
+
+class ReLU(Node):
+    def forward(self, x):
+        return np.maximum(x, 0)
+
+    def backward(self, error):
+        return error * (self.output > 0)
+
+
+class SoftMax(Node):
+    def forward(self, x):
+        ex = np.exp(x - np.max(x, axis=-1, keepdims=True))
+        return ex / np.sum(ex, axis=-1, keepdims=True)
+
+    def backward(self, error):
+        # TODO: not correct?
+        dp = np.sum(error * self.output, axis=-1, keepdims=True)
+        return (error - dp) * self.output
 
 
 if __name__ == '__main__':

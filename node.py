@@ -18,25 +18,61 @@ class Node(Function):
         self.input = None
         self.ascendants = []
         self.descendants = []
-        self._network = None  # the network containing this node
+        self.network = None  # the network containing this node
 
     @property
     def training(self):
-        if self.network and self.network.training
+        return self.network and self.network.training
         
     def connect(self, node):
         """Connect a node as a descendant."""
         self.descendants.append(node)
         node.ascendants.append(self)
+        if self.network:
+            self.network.add(node)
 
     @abstractmethod
-    def setup(self, input_dim):
-        """Initialize the parameters given the dimension of the input."""
-        if input_dim is None:
-            assert self.input_dim is not None, 'input dimensionality not given'
-        else:
-            self.input_dim = input_dim
+    def setup(self):
+        """Initialize the parameters if the node has any."""
+        if all(type(node.dim_out) is int for node in self.ascendants):
+            dim_in = sum(node.dim_out for node in self.ascendants)
+            if self.dim_in is None:
+                self.dim_in = dim_in
+            elif self.dim_in != dim_in:
+                raise AssertionError('node dimensionalities mismatch')
         print(f"Setup {self}.")
+        
+    @abstractmethod
+    def forward(self, *input):
+        raise NotImplementedError
+
+    @abstractmethod
+    def backward(self, *error):
+        raise NotImplementedError
+
+    def _wrapped_forward(self, *input):
+        # call the subclass forward method
+        forward = super().__getattribute__("forward")
+        output = forward(*input)
+        
+        
+
+        # record input and output
+        self.input, self.output = input, output
+        return output
+
+    def _wrapped_backward(self, error):
+        # has not passed forward new input
+        if self.output is None: return
+
+        # call the subclass backward method
+        backward = super().__getattribute__("backward")
+        error = backward(error, pass_error)
+
+        # clear input and output records
+        self.input = self.output = None
+
+        return error
 
     def __setattr__(self, name, value):
         if not hasattr(self, 'parameters'):
@@ -125,8 +161,8 @@ class Compose(Node):
         return error
         
 
-class Dense(Layer):
-    """Dense or fully-connected layer."""
+class Affine(Node):
+    """Affine transformation."""
 
     def __init__(self, size, with_bias=True, **kwds):
         """
@@ -277,5 +313,3 @@ class Dropout(Node):
 
     def backward(self, err):
         return self._mask * err
-
-
