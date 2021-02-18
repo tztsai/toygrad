@@ -3,7 +3,7 @@ from utils import abstractmethod, none_for_default, name2obj
 
 def get_optimizer(name):
     if name == 'sgd':
-        return object.__new__(SGD)
+        return SGD
     elif name == 'adam':
         raise NotImplementedError
     else:
@@ -51,5 +51,11 @@ class SGD(Optimizer):
         return super().__repr__()[:-1] + f', momentum={self.momentum:.2f})'
 
 
-print(Optimizer('sgd'))
-print(SGD(0.1))
+if __name__ == '__main__':
+    print(Optimizer('sgd'))
+    sgd = SGD(0.1, 0.2)
+    print(sgd)
+    sgd.momentum = None
+    print(sgd)
+    print(Optimizer(None))
+    print(Optimizer('sgd', 2))

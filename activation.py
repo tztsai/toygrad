@@ -1,33 +1,30 @@
 from node import Node
 import numpy as np
+from utils import name2obj
 
 
-class ActivationMeta(type):
-    def __call__(self, *args, **kwds):
-        if self is not Optimizer:
-            opt = object.__new__(self)
-            opt.__init__(*args, **kwds) 
-        if type(obj) is str:
-            s = obj.lower()
-            if s == 'tanh':
-                return Tanh()
-            elif s in ['logistic', 'sigmoid']:
-                return Logistic()
-            elif s == 'relu':
-                return ReLU()
-            elif s == 'linear':
-                return None
-            elif s == 'default':
-                return False
-            else:
-                raise ValueError(f"unknown activation function: {obj}")
-        elif not obj:
-            return None
-        else:
-            raise TypeError(f"Activation() argument 1 must be str or Activation")
+def get_activation(name):
+    if name == 'tanh':
+        return Tanh
+    elif name in ['logistic', 'sigmoid']:
+        return Logistic
+    elif name == 'relu':
+        return ReLU
+    elif name == 'linear':
+        return None
+    elif name == 'default':
+        return False
+    else:
+        raise ValueError(f"unknown activation function: {name}")
 
 
-class Tanh(Node):
+class Activation(Node, metaclass=name2obj(get_activation)):
+    def setup(self):
+        super().setup()
+        self.dim_out = self.dim_in
+
+
+class Tanh(Activation):
     def forward(self, x):
         return np.tanh(x)
 
@@ -35,7 +32,7 @@ class Tanh(Node):
         return error * (1 - self.output**2)
 
 
-class Logistic(Node):
+class Logistic(Activation):
     def forward(self, x):
         return 1 / (1 + np.exp(-x))
 
@@ -43,7 +40,7 @@ class Logistic(Node):
         return error * self.output * (1 - self.output)
 
 
-class ReLU(Node):
+class ReLU(Activation):
     def forward(self, x):
         return np.maximum(x, 0)
 
@@ -51,7 +48,7 @@ class ReLU(Node):
         return error * (self.output > 0)
 
 
-class SoftMax(Node):
+class SoftMax(Activation):
     def forward(self, x):
         ex = np.exp(x - np.max(x, axis=-1, keepdims=True))
         return ex / np.sum(ex, axis=-1, keepdims=True)
@@ -63,7 +60,7 @@ class SoftMax(Node):
 
 
 if __name__ == '__main__':
-    sigma = Node('tanh')
+    sigma = Activation('tanh')
     sigma(2)
 
     relu = ReLU()

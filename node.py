@@ -30,17 +30,30 @@ class Node(Function):
         node.ascendants.append(self)
         if self.network:
             self.network.add(node)
+            
+    @contextmanager
+    def isolate(self):
+        asc = self.ascendants
+        desc = self.descendants
+        self.ascendants = []
+        self.descendants = []
+        yield  # do sth with the node here
+        self.ascendants = asc
+        self.descendants = desc
 
     @abstractmethod
     def setup(self):
         """Initialize the parameters if the node has any."""
-        if all(type(node.dim_out) is int for node in self.ascendants):
-            dim_in = sum(node.dim_out for node in self.ascendants)
+        dim_in = [node.dim_out for node in self.ascendants]
+        if all(type(d) is int for d in dim_in):
+            if len(dim_in) == 1: dim_in = dim_in[0]
             if self.dim_in is None:
                 self.dim_in = dim_in
             elif self.dim_in != dim_in:
                 raise AssertionError('node dimensionalities mismatch')
-        print(f"Setup {self}.")
+        else:
+            raise AssertionError(f'input dimension of {self} not specified')
+        print(f"Setup {repr(self)}.")
         
     @abstractmethod
     def forward(self, *input):
@@ -49,32 +62,52 @@ class Node(Function):
     @abstractmethod
     def backward(self, *error):
         raise NotImplementedError
+    
+    def match_io(self, data, nodes):
+        if not nodes:
+            return ()
+        elif len(nodes) == 1:
+            return nodes[0], data
+        else:
+            if type(data) is not tuple or len(data) != len(nodes):
+                raise TypeError(f"I/O mismatch in {self}")
+            return zip(nodes, data)
 
     def _wrapped_forward(self, *input):
         # call the subclass forward method
         forward = super().__getattribute__("forward")
         output = forward(*input)
+        print(output)
         
-        
-
         # record input and output
+        if len(input) == 1: input = input[0]
         self.input, self.output = input, output
-        return output
+        
+        # pass forward the output
+        for node, out in self.match_io(self.descendants, output):
+            node.forward(out)
 
-    def _wrapped_backward(self, error):
+    def _wrapped_backward(self, *error):
+        if not self.training:
+            print('Warning: calling backward but the network is not in training mode')
+            return
+        
         # has not passed forward new input
         if self.output is None: return
 
         # call the subclass backward method
         backward = super().__getattribute__("backward")
-        error = backward(error, pass_error)
+        error = backward(*error)
 
         # clear input and output records
         self.input = self.output = None
 
-        return error
+        # pass backward the error
+        for node, err in self.match_io(self.ascendants, error):
+            node.backward(err)
 
     def __setattr__(self, name, value):
+        "Automatically keeps track of trainable parameters."
         if not hasattr(self, 'parameters'):
             super().__setattr__('parameters', {})
 
@@ -86,6 +119,9 @@ class Node(Function):
             del self.parameters[name]
 
         super().__setattr__(name, value)
+        
+    def __str__(self):
+        return f'node({id(self)})'
 
     def __repr__(self):
         return (f"{type(self).__name__}({self.size}%s%s)" %
@@ -147,7 +183,25 @@ class Compose(Node):
     
     def __init__(self, *nodes):
         """Composes several nodes into one node."""
+        assert nodes, "no nodes are composed"
+        
+        super().__init__(dim_out, dim_in)
+        
         self.nodes = nodes
+        for i in range(len(nodes) - 1):
+            nodes[i].connect(nodes[i + 1])
+            
+    @property
+    def dim_in(self):
+        return self.nodes[0].dim_in
+    
+    @property
+    def dim_out(self):
+        return self.nodes[-1].dim_out
+            
+    def setup(self):
+        for node in self.nodes:
+            node.setup()
         
     def forward(self, input):
         for node in self.nodes:
@@ -159,18 +213,22 @@ class Compose(Node):
         for node in reversed(self.nodes):
             error = node.backward(error)
         return error
+    
+    def __repr__(self):
+        node_list = ', '.join(map(repr, self.nodes))
+        return f'Compose({node_list})'
         
 
 class Affine(Node):
     """Affine transformation."""
 
-    def __init__(self, size, with_bias=True, **kwds):
+    def __init__(self, dim_out, with_bias=True, dim_in=None):
         """
         Extra args:
             with_bias: whether the affine transformation has a constant bias
         """
+        super().__init__(dim_out, dim_in)
         self.with_bias = with_bias
-        super().__init__(size, **kwds)
 
     def setup(self, input_dim):
         super().setup(input_dim)
@@ -184,7 +242,7 @@ class Affine(Node):
         else:
             return input @ self.weights
 
-    def backward(self, error, pass_error=True):
+    def backward(self, error):
         grad = self.input.T @ error
         if self.with_bias:  # insert the gradient of bias
             grad_b = np.sum(error, axis=0)
@@ -193,12 +251,12 @@ class Affine(Node):
         # limit the magnitude of gradient
         self.weights.grad += grad  # np.clip(grad, -1e6, 1e6)
 
-        if pass_error:
+        if self.ascendants:
             # return the error passed to the previous layer
             return error @ self.weights[1:].T
 
 
-class RBF(Layer):
+class RBF(Node):
     """Radial-basis function layer."""
 
     def __init__(self, size, *, sigma=0.1, move_centers=True,
@@ -288,7 +346,7 @@ class RBF(Layer):
 
         return output
 
-    def backward(self, error, pass_error=True):
+    def backward(self, error):
         """The RBF layer does not compute gradients or backprop errors."""
         return
 

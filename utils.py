@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Union, Optional, List
 from abc import abstractmethod
 from functools import lru_cache, wraps
+from contextlib import contextmanager
 from copy import deepcopy
 import numbers
 import tqdm
@@ -146,13 +147,14 @@ def discretize(x, splits):
 def none_for_default(cls):
     """A class decorator that makes instances get the class attribute if an
        instance attribute is None and the corresponding class attribute exists."""
-       
+
+    # keep the original __getattribute__ method
     getattribute = cls.__getattribute__
     
     def get(self, name):
         value = getattribute(self, name)
-        if value is None and name in dir(type(self)):
-            return getattr(type(self), name)
+        if value is None and hasattr(type(self), name):
+            return getattr(type(self), name)  # get the class attribute
         return value
     
     cls.__getattribute__ = get
@@ -160,19 +162,26 @@ def none_for_default(cls):
     
     
 def name2obj(parser):
-    """A metaclass factory that allows classes to instantiate subclasses by names."""
+    """A metaclass factory that allows classes to instantiate subclasses by names.
+    
+    Args:
+        parser: a function that accepts a str and returns a class to instantiate
+    """
     
     class Meta(type):
         def __call__(self, *args, **kwds):
             cln = self.__name__
-            if type(self.__base__) is Meta:
+            if type(self.__base__) is Meta:  # a subclass of the created class
                 obj = object.__new__(self)
                 obj.__init__(*args, **kwds)
-                return obj
-            elif len(args) != 1 or kwds:
-                raise TypeError(f'{cln}() takes 1 argument')
+                return obj  # initialize as usual
+            elif len(args) < 1:
+                raise TypeError(f'{cln}() takes at least 1 argument')
             elif type(obj := args[0]) is str:
-                return parser(obj.lower())
+                cls, *args = parser(obj.lower(), *args[1:])
+                obj = object.__new__(cls)
+                obj.__init__(*args)
+                return obj
             elif isinstance(obj, self):
                 return obj
             else:

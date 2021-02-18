@@ -15,21 +15,35 @@ class Network(Function):
         evaluation: the network only computes the output
     """
 
-    def __init__(self, entry=None):
+    def __init__(self, entry: Optional[Node] = None):
+        self.nodes = {}
         self.entry = entry
         self.exit = None
-        self.nodes = set()
-        self.parameters = set()
         self.training = True
-        
         if entry: self.add(entry)
-
+        
+    def add(self, node: Node):
+        if id(node) not in self.nodes:
+            self.nodes[id(node)] = node
+            node.network = self
+            for desc in node.descendants:
+                self.add(desc)
+        
+    @property
+    def parameters(self):
+        for node in self.nodes.values():
+            yield from node.parameters.values()
+            
     def forward(self, input):
         """Receive the input and compute the output."""
-        raise NotImplementedError
+        self.entry.forward(input)
+        if self.exit:
+            return self.exit.output
 
     def backward(self, error):
         """If in the training mode, propagates back the error and computes parameters' gradients."""
+        if self.exit:
+            self.exit.backward(error)
 
     def predict(self, input):
         """Predict the output in the evaluation mode."""
@@ -42,64 +56,19 @@ class Network(Function):
     def loss(self, input, target, loss: Union[Loss, str] = 'l2'):
         """Compute the average loss given the input and the target data."""
         return Loss(loss)(self.predict(input), target) / len(input)
-    
-    def add(self, node):
-        self.parameters.extend(node.parameters.values())
 
-    def state_dict(self):
+    def state(self):
         return self.__dict__.copy()
 
     def save(self, filename):
         with open(filename, 'wb') as f:
-            pickle.dump(self.state_dict(), f)
+            pickle.dump(self.state(), f)
 
     def load(self, filename):
         with open(filename, 'rb') as f:
             state = pickle.load(f)
         for attr in state:
             setattr(self, attr, state[attr])
-
-
-class Sequential(NN):
-    """Sequential neural network."""
-
-    @property
-    def depth(self):
-        return len(self.layers)
-
-    def add(self, layer: Layer):
-        if layer._built:
-            assert layer.input_dim == self.shape[-1], \
-                "cannot match the input dimensionality of %s" % layer
-        else:
-            layer.setup(self.shape[-1])
-
-        layer.model = self
-        self.layers.append(layer)
-        self.shape.append(layer.size)
-        self.parameters.extend(layer.parameters.values())
-
-        if layer.activation is False:
-            layer.activation = self.activation
-
-    def forward(self, input, start_layer=0):
-        for k in range(start_layer, self.depth):
-            output = self.layers[k].forward(input)
-            input = output
-        return output
-
-    def backward(self, error):
-        for k in reversed(range(self.depth)):
-            error = self.layers[k].backward(error, pass_error=bool(k))
-            if error is None: break
-
-    def step(self, input, target):
-        output = self.forward(input)
-        self.backward(output, target)
-
-    def __repr__(self):
-        layers_repr = ', '.join(map(repr, self.layers))
-        return f'Sequential({self.shape[0]}, {layers_repr})'
 
 
 def train(model: Network, input, target, *, epochs=20, lr=None, bs=None,
