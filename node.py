@@ -52,7 +52,8 @@ class Node(Function):
     def setup(self, dim_in=None):
         """Initialize the parameters if the node has any."""
         if self._has_setup:
-            dbg('%s has been setup', self)
+            dbg(f'{self} has been setup')
+            return
             
         if dim_in is None:
             dim_in = [node.dim_out for node in self.ascendants]

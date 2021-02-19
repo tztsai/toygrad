@@ -1,3 +1,6 @@
+import sys
+import logging
+from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
 from functools import lru_cache, wraps
 from contextlib import contextmanager
@@ -5,32 +8,40 @@ from copy import deepcopy
 from collections import defaultdict
 from typing import Union, Optional, List
 from abc import abstractmethod
-import logging
 
 
 # logging config
+#%%
+class LogFormatter(logging.Formatter):
+
+    formats = {
+        DEBUG: ("%(module)s.%(funcName)s, L%(lineno)s:\n  %(msg)s"),
+        INFO:  "%(msg)s",
+        WARN:  "WARNING: %(msg)s",
+        ERROR: "ERROR: %(msg)s"
+    }
+    
+    def format(self, record):
+        dct = record.__dict__
+        fmt = LogFormatter.formats.get(record.levelno, self._fmt)
+        return fmt % dct
+        
 
 logLevel = logging.DEBUG
-logFormat = logging.Formatter('%(message)s')
+logFormat = LogFormatter()
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logLevel)
 
 logHandler = logging.StreamHandler()
 logHandler.setLevel(logging.DEBUG)
 logHandler.setFormatter(logFormat)
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logLevel)
 logger.addHandler(logHandler)
 
-
-def dbg(msg, *args, **kwds):
-    logger.debug(msg, *args, **kwds)
-
-def info(msg, *args, **kwds):
-    logger.info(msg, *args, **kwds)
-    
-def warn(msg, *args, **kwds):
-    logger.warning(msg, *args, **kwds)
-    
+dbg = logger.debug
+info = logger.info
+warn = logger.warning
     
 def setloglevel(level):
     logger.setLevel(level)
@@ -115,3 +126,5 @@ def parse_name(f):
         return f(args[0].lower())
     return call
 
+
+# %%
