@@ -1,2 +1,3 @@
 from utils import setloglevel
-setloglevel('debug')
+
+setloglevel('INFO')

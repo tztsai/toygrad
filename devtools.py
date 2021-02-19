@@ -5,42 +5,40 @@ from copy import deepcopy
 from collections import defaultdict
 from typing import Union, Optional, List
 from abc import abstractmethod
+import logging
 
 
-DEBUG = 1
-INFO = 2
-WARNING = 3
-ERROR = 4
+# logging config
 
-VISIBLE_LEVEL = INFO  # the level at which to do printing
-LOG_LEVEL = INFO      # the level of the logging, if not lower than VISIBLE_LEVEL, then log messages will be printed
+logLevel = logging.DEBUG
+logFormat = logging.Formatter('%(message)s')
+
+logHandler = logging.StreamHandler()
+logHandler.setLevel(logging.DEBUG)
+logHandler.setFormatter(logFormat)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logLevel)
+logger.addHandler(logHandler)
 
 
-_print = print
+def dbg(msg, *args, **kwds):
+    logger.debug(msg, *args, **kwds)
 
-def print(*msgs, **kwds):
-    """Override the builtin print function."""
-    if VISIBLE_LEVEL <= LOG_LEVEL:
-        _print(*msgs, **kwds)
-        
-        
-def setloglevel(level: str):
-    if type(level) is str:
-        d = {'info': INFO, 'debug': DEBUG, 'warning': WARNING}
-        try:
-            level = d[level.lower()]
-        except:
-            raise ValueError("no such logging level")
-    else:
-        raise TypeError('log level is not str')
+def info(msg, *args, **kwds):
+    logger.info(msg, *args, **kwds)
     
-    global LOG_LEVEL
-    LOG_LEVEL = level
-
+def warn(msg, *args, **kwds):
+    logger.warning(msg, *args, **kwds)
+    
+    
+def setloglevel(level):
+    logger.setLevel(level)
+    
 
 def pbar(iterable, **kwds):
     """A process bar."""
-    if LOG_LEVEL < VISIBLE_LEVEL: return iterable
+    if logger.level > logLevel: return iterable
     return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
 
 

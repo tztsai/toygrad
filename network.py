@@ -20,7 +20,10 @@ class Network(Function):
         self.entry = entry
         self.exit = None
         self.training = True
-        if entry: self.add(entry)
+        
+        if entry:
+            self.add(entry)
+            entry.setup()
         
     def add(self, node: Node):
         if id(node) not in self.nodes:
@@ -100,15 +103,15 @@ def train(model: Network, input, target, *, epochs=20, lr=None, bs=None,
     loss_func = Loss(loss)
     history = {'loss': [], 'val_loss': []}
 
-    print('\nStart training', model)
-    print('Input shape:', input.shape)
-    print('Target shape:', target.shape)
-    print('Total epochs:', epochs)
-    print('Batch size:', batches.batch_size)
-    print('Optimizer:', optimizer)
+    info('\nStart training', model)
+    info('Input shape:', input.shape)
+    info('Target shape:', target.shape)
+    info('Total epochs:', epochs)
+    info('Batch size:', batches.batch_size)
+    info('Optimizer:', optimizer)
 
     for epoch in range(epochs):
-        print('\nEpoch:', epoch)
+        info('\nEpoch:', epoch)
 
         loss = 0
         for xb, tb in pbar(batches):
@@ -125,7 +128,7 @@ def train(model: Network, input, target, *, epochs=20, lr=None, bs=None,
             x_val, t_val = val_data
             history['val_loss'].append(model.loss(x_val, t_val))
 
-        print('\t' + ', '.join('%s = %.2f' % (k, v[-1])
+        info('\t' + ', '.join('%s = %.2f' % (k, v[-1])
                                 for k, v in history.items() if v))
 
         for callback in callbacks:

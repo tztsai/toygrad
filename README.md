@@ -3,3 +3,9 @@
 ## Usage
 
 - Set `model.training` to `True` or `False` to switch between the training mode and the evaluation mode.
+
+## TODO
+
+- [ ] make basic sequential models work  
+- [ ] implement CNN
+- [ ] write README

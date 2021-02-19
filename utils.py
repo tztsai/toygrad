@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import numbers
-import tqdm
 from devtools import *
 
 

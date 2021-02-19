@@ -1,4 +1,5 @@
 from function import Function
+from param import Parameter
 from utils import *
 from devtools import *
 
@@ -21,6 +22,10 @@ class Node(Function):
         self.ascendants = []
         self.descendants = []
         self.network = None  # the network containing this node
+        self._has_setup = False
+        
+        if dim_out and dim_in:
+            self.setup(dim_in)
 
     @property
     def training(self):
@@ -42,20 +47,36 @@ class Node(Function):
         yield  # do sth with the node here
         self.ascendants = asc
         self.descendants = desc
-
+        
     @abstractmethod
-    def setup(self):
+    def setup(self, dim_in=None):
         """Initialize the parameters if the node has any."""
-        dim_in = [node.dim_out for node in self.ascendants]
-        if all(type(d) is int for d in dim_in):
-            if len(dim_in) == 1: dim_in = dim_in[0]
+        if self._has_setup:
+            dbg('%s has been setup', self)
+            
+        if dim_in is None:
+            dim_in = [node.dim_out for node in self.ascendants]
+            assert dim_in, f'input dimensionality of {self} not given'
+            
+        if dim(dim_in) == 0:
+            self.dim_in = dim_in
+            if self.ascendants:
+                if len(self.ascendants) > 1:
+                    raise AssertionError(f'dimensionality mismatch in {self}')
+                elif self.ascendants[0].dim_out:
+                    pass
+        elif all(type(d) is int for d in dim_in):
+            if len(dim_in) == 1:
+                dim_in = dim_in[0]
             if self.dim_in is None:
                 self.dim_in = dim_in
             elif self.dim_in != dim_in:
-                raise AssertionError('node dimensionalities mismatch')
+                raise AssertionError(f'dimensionality mismatch in {self}')
         else:
-            raise AssertionError(f'input dimension of {self} not specified')
-        print(f"Setup {repr(self)}.")
+            raise AssertionError(f'input dimension of {self} not given')
+        
+        self._has_setup = True
+        info(f"Setup {repr(self)}.")
         
     @abstractmethod
     def forward(self, *input):
@@ -133,67 +154,13 @@ class Node(Function):
                  ", dropout=%f" % self.dropout.p))
 
 
-class Parameter(np.ndarray):
-    """A trainable parameter in a node."""
-    
-    grad_lim = 1e8  # limit of the magnitude of each element of the gradient
-
-    def __new__(cls, value=None, *, size=None, mean=0, scale=None):
-        """Create a new Parameter.
-
-        If `value` is given, then it will be converted to a Parameter.
-        However, if `size` is additionally specified, then a new Parameter
-        of this size will be created filled with the given `value`.
-        
-        If `value` is not given, then `size` must be provided to generate
-        a random Parameter following Gaussian distribution. Additionally,
-        `mean` and `scale` of the Gaussian can be specified.
-        """
-        if value is None:  # random initialization
-            if size is None:
-                raise AssertionError('the size of the Parameter must be'
-                                     'given for random initialization')
-                
-            if scale is None:
-                length = size[0] if hasattr(size, '__len__') else size
-                scale = 1 / np.sqrt(length)  # Xavier initialization
-                
-            param = np.random.normal(loc=mean, scale=scale, size=size)
-            return Parameter(param)
-        
-        else:  # convert the value to an array
-            if size is not None:  # fill an array of the given size
-                value = np.full(size, value)
-            return np.asarray(value).view(cls)
-
-    @property
-    def grad(self):
-        if not hasattr(self, '_grad'):
-            self._grad = 0
-            self._dirty = False
-        return self._grad
-
-    @grad.setter
-    def grad(self, value):
-        self._grad = np.clip(value, -self.grad_lim, self.grad_lim)
-        self._dirty = True
-
-    def zero_grad(self):
-        self._grad = 0
-        self._dirty = False
-
-    @property
-    def need_update(self):
-        return self._dirty
-
-
 class Compose(Node):
     
     def __init__(self, *nodes):
         """Composes several nodes into one node."""
         assert nodes, "no nodes are composed"
         
-        super().__init__(dim_out, dim_in)
+        super().__init__(nodes[0].dim_in, nodes[-1].dim_out)
         
         self.nodes = nodes
         for i in range(len(nodes) - 1):
@@ -266,41 +233,41 @@ class Affine(Node):
 
 
 class RBF(Node):
-    """Radial-basis function layer."""
+    """Radial-basis function."""
 
     def __init__(self, size, *, sigma=0.1, move_centers=True,
-                 centers_mean=0, centers_deviation=1,
-                 step_size=0.01, step_decay=0.25,
-                 update_neighbors=False, nb_radius=0.05, **kwds):
+                 update_neighbors=False, nb_radius=0.05,
+                 step_size=0.01, step_decay=0.25):
         """
-        Extra args:
-            sigma: the width of each RBF node
+        Args:
+            size: the number of RBF units in the node, i.e. the dim of output
+            sigma: the width of each RBF unit
             move_centers: whether to update the RBF centers during training
-            centers_mean: the mean value of the RBF centers
-            centers_deviation: the standard deviation of the RBF centers
+            update_neighbors: whether units within the winner's neighborhood will update with the winner
+            nb_radius: the radius of the neighborhood
             step_size: scaling factor of the update of an RBF center
             step_decay: linearly decrease the step size of the neighbors to be updated s.t. the step
                 size of the neighbor on the border of the neighborhood is scaled by `step_decay`
-            update_neighbors: whether nodes within the winner's neighborhood will update with the winner
-            nb_radius: the radius of the neighborhood
         """
+        super().__init__(size)
         self.sigma = sigma
         self.move_centers = move_centers
-        self.centers_mean = centers_mean
-        self.centers_dev = centers_deviation
         self.step_size = step_size
         self.step_decay = step_decay
         self.update_neighbors = update_neighbors
         self.nb_radius = nb_radius
-        super().__init__(size, **kwds)
 
-    def setup(self, input_dim):
-        super().setup(input_dim)
+    def setup(self, *, centers=None, mean=0, stddev=1):
+        super().setup()
 
-        # randomly initialize RBF centers
-        self.centers = Parameter(size=[self.size, input_dim],
-                                 mean=self.centers_mean,
-                                 scale=self.centers_dev)
+        if centers is not None:
+            assert np.shape(centers) == (self.dim_out, self.dim_in), \
+                "the shape of the centers mismatches the RBF node"
+            self.centers = Parameter(centers)
+        else:
+            # randomly initialize RBF centers
+            self.centers = Parameter(size=[self.dim_out, self.dim_in],
+                                     mean=mean, scale=stddev)
 
         # compute the pair-wise distances between RBF centers
         self._center_dist = {(i, j): self.distance(mu_i, mu_j)
@@ -312,7 +279,7 @@ class RBF(Node):
         return self._center_dist[min(i, j), max(i, j)] if i != j else 0
 
     def neighborhood(self, i):
-        "RBF nodes in the neighborhood of node i, including itself."
+        "RBF units in the neighborhood of unit i, including itself."
         return [j for j in range(self.size)
                 if self.center_dist(i, j) < self.nb_radius]
 
@@ -336,7 +303,7 @@ class RBF(Node):
         # find the neighbors of each winner
         neighbors = {j: self.neighborhood(j) for j in set(winners)}
 
-        # gather all RBF nodes to be updated
+        # gather all RBF units to be updated
         updated = set.union(neighbors.values())
 
         for i, j in enumerate(winners):
@@ -367,8 +334,8 @@ class RBF(Node):
 class Dropout(Node):
     """Randonly deactivates some neurons to mitigate overfitting."""
 
-    def __init__(self, p, size):
-        super().__init__()
+    def __init__(self, size, p):
+        super().__init__(size)
         self.p = p
         self.size = size
         self._mask = None
