@@ -1,5 +1,6 @@
 import sys
 import logging
+import numpy as np
 from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
 from functools import lru_cache, wraps
@@ -127,4 +128,9 @@ def parse_name(f):
     return call
 
 
-# %%
+def squeeze(x):
+    try:
+        assert len(x) == 1
+        return x[0]
+    except:
+        return x

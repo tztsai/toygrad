@@ -1,58 +1,83 @@
 import numpy as np
 import pickle
-from optimizers import Optimizer
+from optimizer import Optimizer
 from function import Function
 from loss import Loss
 from node import Node
 from utils import *
 
 
-class Network(Function):
-    """Base class of a neural network.
+class Model(Function):
+    """A neural network model."""
     
-    Two modes:
-        training: gradients are recorded and parameters can be updated
-        evaluation: the network only computes the output
-    """
-
-    def __init__(self, entry: Optional[Node] = None):
-        self.nodes = {}
+    def __init__(self, entry: Node, exit: Node = None):
         self.entry = entry
-        self.exit = None
+        self.exit = entry if exit is None else exit
+        
+        assert isinstance(entry, Node) and isinstance(exit, Node), \
+            'the entry and the exit must be Node instances'
+        
+        self.nodes = self.traverse()
+        self._training = None
         self.training = True
         
-        if entry:
-            self.add(entry)
-            entry.setup()
+        if self.exit not in self.nodes:
+            raise AssertionError('the exit is not connected to the entry')
         
-    def add(self, node: Node):
-        if id(node) not in self.nodes:
-            self.nodes[id(node)] = node
-            node.network = self
-            for desc in node.descendants:
-                self.add(desc)
+        for node in self.nodes:
+            if not node._has_setup:
+                node.setup()
+                info(f"Setup {repr(node)}.")
+    
+    @property
+    def training(self):
+        return self._training
+    
+    @training.setter
+    def training(self, value):
+        if value not in [True, False]:
+            raise TypeError('the training attribute should be set to boolean values')
         
+        self._training = value
+        for node in self.nodes:
+            node.training = value
+            
+    def traverse(self):
+        """Search all connected nodes from the entry node."""
+        nodes = []
+        node_set = set()
+        
+        def dfs(n: Node):
+            if n not in node_set:
+                nodes.append(n)
+                node_set.add(n)
+                for d in n.descendants: dfs(d)
+                
+        dfs(self.entry)
+        return nodes
+    
     @property
     def parameters(self):
-        for node in self.nodes.values():
+        for node in self.nodes:
             yield from node.parameters.values()
             
     def forward(self, input):
         """Receive the input and compute the output."""
         self.entry.forward(input)
-        if self.exit:
-            return self.exit.output
+        return self.exit.output
 
     def backward(self, error):
         """If in the training mode, propagates back the error and computes parameters' gradients."""
-        if self.exit:
+        if not self.training:
+            warn('not in training mode, back-prop has no effect')
+        else:
             self.exit.backward(error)
 
     def predict(self, input):
         """Predict the output in the evaluation mode."""
         training = self.training
         self.training = False
-        output = self.forward(input)
+        output = self(input)
         self.training = training
         return output
 
@@ -74,7 +99,7 @@ class Network(Function):
             setattr(self, attr, state[attr])
 
 
-def train(model: Network, input, target, *, epochs=20, lr=None, bs=None,
+def train(model: Model, input, target, *, epochs=20, lr=None, bs=None,
           optimizer: Union[str, Optimizer] = 'sgd', loss: Union[str, Loss] = 'l2',
           val_data: Optional[list] = None, callbacks: list = ()) -> dict:
     """Given the input data, train the parameters to fit the target data.

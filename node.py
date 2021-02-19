@@ -21,22 +21,32 @@ class Node(Function):
         self.input = None
         self.ascendants = []
         self.descendants = []
-        self.network = None  # the network containing this node
-        self._has_setup = False
+        self.training = True
         
-        if dim_out and dim_in:
-            self.setup(dim_in)
+        self._forward = super().__getattribute__("forward")
+        self._backward = super().__getattribute__("backward")
+        
+        self._has_setup = False
 
-    @property
-    def training(self):
-        return self.network and self.network.training
+    # @property
+    # def _root(self):
+    #     if self.__root is None:
+    #         return None
+    #     else:
+    #         while (r := self.__root._root) is not None:
+    #             self.__root = r
+    #         return self.__root
+
+    # @_root.setter
+    # def _root(self, root):
+    #     self.__root = root
         
     def connect(self, node):
         """Connect a node as a descendant."""
         self.descendants.append(node)
         node.ascendants.append(self)
-        if self.network:
-            self.network.add(node)
+        # node._root = self._root
+        return node
             
     @contextmanager
     def isolate(self):
@@ -55,29 +65,51 @@ class Node(Function):
             dbg(f'{self} has been setup')
             return
             
-        if dim_in is None:
-            dim_in = [node.dim_out for node in self.ascendants]
-            assert dim_in, f'input dimensionality of {self} not given'
-            
-        if dim(dim_in) == 0:
-            self.dim_in = dim_in
-            if self.ascendants:
-                if len(self.ascendants) > 1:
-                    raise AssertionError(f'dimensionality mismatch in {self}')
-                elif self.ascendants[0].dim_out:
-                    pass
-        elif all(type(d) is int for d in dim_in):
-            if len(dim_in) == 1:
-                dim_in = dim_in[0]
-            if self.dim_in is None:
-                self.dim_in = dim_in
-            elif self.dim_in != dim_in:
-                raise AssertionError(f'dimensionality mismatch in {self}')
-        else:
-            raise AssertionError(f'input dimension of {self} not given')
+        asc_dim_out = [node.dim_out for node in self.ascendants]
         
+        if dim_in is None:
+            dim_in = self.dim_in
+            
+        if dim_in is None:
+            dim_in = asc_dim_out
+            assert dim_in, f'dimensionality unspecified in {self}'
+        
+        if self.ascendants:
+            for k, (do, di) in enumerate(
+                self._match_dim(asc_dim_out, dim_in)):
+                    if do is None:
+                        self.ascendants[k].dim_out = di
+                    else:
+                        dim_in[k] = do
+            
+        self.dim_in = squeeze(dim_in)
         self._has_setup = True
-        info(f"Setup {repr(self)}.")
+        
+    def _match_dim(self, d1, d2):
+        if dim(d1) == 0: d1 = [d1]
+        if dim(d2) == 0: d2 = [d2]
+        
+        assert len(d1) == len(d2), f'dimensionality mismatch in {self}'
+        
+        for x, y in zip(d1, d2):
+            if x is None and y is None:
+                raise AssertionError(f'dimensionality unspecified in {self}')
+            elif (x is None) ^ (y is None):
+                yield x, y  # set the unspecified dim to the other one
+            else:
+                assert x == y, f'dimensionality mismatch in {self}'
+    
+    def _match_pass(self, nodes, data):
+        if not nodes:  # no nodes to pass
+            return ()
+        
+        if len(nodes) == 1:
+            data = data,
+            
+        if type(data) is not tuple or len(data) != len(nodes):
+            raise AssertionError(f"arity mismatch in the forward/backward pass of {self}")
+        
+        return zip(nodes, data)
         
     @abstractmethod
     def forward(self, *input):
@@ -87,31 +119,38 @@ class Node(Function):
     def backward(self, *error):
         raise NotImplementedError
     
-    def match_io(self, nodes, data):
-        if not nodes:
-            return ()
-        elif len(nodes) == 1:
-            return nodes[0], data
+    def state(self):
+        return self.__dict__.copy()
+        
+    def __getattribute__(self, attr):
+        if attr == "forward":
+            return super().__getattribute__("_wrapped_forward")
+        elif attr == "backward":
+            return super().__getattribute__("_wrapped_backward")
         else:
-            if type(data) is not tuple or len(data) != len(nodes):
-                raise TypeError(f"I/O mismatch in {self}")
-            return zip(nodes, data)
+            return super().__getattribute__(attr)
 
     def _wrapped_forward(self, *input):
+        """Wrapper of forward method to add preprocessing and postprocessing.
+        
+        When the user calls `forward`, `_wrapped_forward` will be called instead.
+        The `forward` method implemented by a subclass is accessed via `self._forward`.
+        """
         # call the inner forward method
         output = self._forward(*input)
         
         # record input and output
-        if len(input) == 1: input = input[0]
+        input = squeeze(input)
         self.input, self.output = input, output
         
         # pass forward the output
-        for node, out in self.match_io(self.descendants, output):
+        for node, out in self._match_pass(self.descendants, output):
             node.forward(out)
             
         return output
 
     def _wrapped_backward(self, *error):
+        """Wrapper of backward method to add preprocessing and postprocessing."""
         # has not passed forward new input
         if self.output is None: return
         
@@ -125,7 +164,7 @@ class Node(Function):
         self.input = self.output = None
 
         # pass backward the error
-        for node, err in self.match_io(self.ascendants, error):
+        for node, err in self._match_pass(self.ascendants, error):
             node.backward(err)
             
         return error
@@ -145,14 +184,11 @@ class Node(Function):
         super().__setattr__(name, value)
         
     def __str__(self):
-        return f'node({id(self)})'
+        return f'node({hex(id(self))[-3:]})'
 
     def __repr__(self):
-        return (f"{type(self).__name__}({self.size}%s%s)" %
-                ("" if not self.activation else
-                 ", activation='%s'" % type(self.activation).__name__,
-                 "" if not self.dropout else
-                 ", dropout=%f" % self.dropout.p))
+        nodetype = type(self).__name__
+        return nodetype + f'({self.dim_in}, {self.dim_out})'
 
 
 class Compose(Node):
@@ -175,17 +211,17 @@ class Compose(Node):
     def dim_out(self):
         return self.nodes[-1].dim_out
             
-    def setup(self):
-        for node in self.nodes:
-            node.setup()
+    def setup(self, dim_in=None):
+        for i, node in enumerate(self.nodes):
+            node.setup(None if i else dim_in)
         
-    def forward(self, input):
+    def forward(self, *input):
         for node in self.nodes:
-            output = node.forward(input)
+            output = node.forward(*input)
             input = output
         return output
     
-    def backward(self, error):
+    def backward(self, *error):
         for node in reversed(self.nodes):
             error = node.backward(error)
         return error
@@ -198,16 +234,16 @@ class Compose(Node):
 class Affine(Node):
     """Affine transformation."""
 
-    def __init__(self, dim_out, with_bias=True, dim_in=None):
+    def __init__(self, dim_out, dim_in=None, *, with_bias=True):
         """
-        Extra args:
+        Args:
             with_bias: whether the affine transformation has a constant bias
         """
         super().__init__(dim_out, dim_in)
         self.with_bias = with_bias
 
-    def setup(self):
-        super().setup()
+    def setup(self, dim_in=None):
+        super().setup(dim_in)
         # coefficients of the affine transformation
         self.weights = Parameter(size=[self.dim_in + self.with_bias, self.dim_out])
 
@@ -236,12 +272,13 @@ class Affine(Node):
 class RBF(Node):
     """Radial-basis function."""
 
-    def __init__(self, size, *, sigma=0.1, move_centers=True,
+    def __init__(self, size, dim, *, sigma=0.1, move_centers=True,
                  update_neighbors=False, nb_radius=0.05,
                  step_size=0.01, step_decay=0.25):
         """
         Args:
             size: the number of RBF units in the node, i.e. the dim of output
+            dim: the dim of each RBF unit, i.e. the dim of input
             sigma: the width of each RBF unit
             move_centers: whether to update the RBF centers during training
             update_neighbors: whether units within the winner's neighborhood will update with the winner
@@ -250,7 +287,7 @@ class RBF(Node):
             step_decay: linearly decrease the step size of the neighbors to be updated s.t. the step
                 size of the neighbor on the border of the neighborhood is scaled by `step_decay`
         """
-        super().__init__(size)
+        super().__init__(size, dim)
         self.sigma = sigma
         self.move_centers = move_centers
         self.step_size = step_size
@@ -258,8 +295,8 @@ class RBF(Node):
         self.update_neighbors = update_neighbors
         self.nb_radius = nb_radius
 
-    def setup(self, *, centers=None, mean=0, stddev=1):
-        super().setup()
+    def setup(self, dim=None, *, centers=None, mean=0, stddev=1):
+        super().setup(dim)
 
         if centers is not None:
             assert np.shape(centers) == (self.dim_out, self.dim_in), \
@@ -325,7 +362,6 @@ class RBF(Node):
 
     def backward(self, error):
         """The RBF layer does not compute gradients or backprop errors."""
-        return
 
     def __repr__(self):
         repr = super().__repr__()
@@ -348,3 +384,12 @@ class Dropout(Node):
 
     def backward(self, err):
         return self._mask * err
+
+
+# %% test
+if __name__ == '__main__':
+    a = Affine(5)
+    b = Affine(8)
+    a.connect(b)
+    a.setup(3)
+    a(np.ones([10, 3]))
