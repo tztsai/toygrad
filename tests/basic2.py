@@ -5,11 +5,11 @@ from model import *
 from activation import *
 
 # %%
-a = Affine(2, 5)
+a = Linear(2, 5)
 tanh1 = Tanh()
-b = Affine(2)
+b = Linear(2)
 tanh2 = Tanh()
-c = Affine(5)
+c = Linear(5)
 sm = SoftMax(5)
 
 a.connect(tanh1).connect(b).connect(tanh2).connect(c).connect(sm)

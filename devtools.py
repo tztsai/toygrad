@@ -7,7 +7,7 @@ from functools import lru_cache, wraps
 from contextlib import contextmanager
 from copy import deepcopy
 from collections import defaultdict
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Tuple
 from abc import abstractmethod
 
 
@@ -73,7 +73,7 @@ def none_for_default(cls):
     return cls
 
 
-def make_meta(getter):
+def makemeta(getter):
     """A metaclass factory that customizes class instantiation.
     
     Args:
@@ -85,26 +85,36 @@ def make_meta(getter):
     class Meta(type):
         def __call__(self, *args, **kwds):
             cln = self.__name__
+            
             if type(self.__base__) is Meta:  # a subclass of the created class
                 obj = object.__new__(self)
                 obj.__init__(*args, **kwds)
                 return obj  # initialize as usual
+            
             elif len(args) < 1:
                 raise TypeError(f'{cln}() takes at least 1 argument')
+            
             elif isinstance(args[0], self):
                 if len(args) > 1 or kwds:  # return a new instance
                     obj = object.__new__(type(args[0]))
                     obj.__init__(*args[1:], **kwds)
                 return obj
+            
             else:
                 try:
                     ret = getter(*args, **kwds)
                 except TypeError as e:
                     raise TypeError(f'{cln}() {e}')
+                
+                if isinstance(ret, self):
+                    return ret
+                
                 if type(ret) is tuple:
                     cls, *ini_args = ret
                 else:
                     cls, ini_args = ret, ()
+                    
+                assert issubclass(cls, self)
                 obj = object.__new__(cls)
                 obj.__init__(*ini_args)
                 return obj
@@ -127,6 +137,15 @@ def parse_name(f):
         return f(args[0].lower())
     return call
 
+
+def is_list(x):
+    return isinstance(x, [list, tuple])
+
+
+def expand(x):
+    "Expand x into a list if it is not one, except that x is None."
+    return x if type(x) is list or x is None else [x]
+    
 
 def squeeze(x):
     try:

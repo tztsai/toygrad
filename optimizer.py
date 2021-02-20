@@ -12,7 +12,7 @@ def get_optimizer(name: str):
 
 
 @none_for_default
-class Optimizer(metaclass=make_meta(get_optimizer)):
+class Optimizer(metaclass=makemeta(get_optimizer)):
     """Base class of an optimizer."""
     learning_rate = 1e-2
     

@@ -24,10 +24,7 @@ class Model(Function):
         if self.exit not in self.nodes:
             raise AssertionError('the exit is not connected to the entry')
         
-        for node in self.nodes:
-            if not node._has_setup:
-                node.setup()
-                info(f"Setup {repr(node)}.")
+        self.entry.setup()
     
     @property
     def training(self):
@@ -105,10 +102,8 @@ def train(model: Model, input, target, *, epochs=20, lr=None, bs=None,
     """Given the input data, train the parameters to fit the target data.
 
         Args:
-            input: an array of input data - if 1D, then each point is a number;
-                if 2D, then each point is a row vector in the array
-            target: an array of target or label data - if 1D, then each point is a number;
-                if 2D, then each point is a row vector in the array
+            input: an array of input data
+            target: an array of target or label data
             epochs: number of epochs to train
             lr: learning rate, use lr of the optimizer by default
             bs: batch size, use bs of BatchLoader by default
@@ -121,8 +116,16 @@ def train(model: Model, input, target, *, epochs=20, lr=None, bs=None,
         Returns:
             A dict of training history including losses etc.
     """
-    input, target = reshape2D(input), reshape2D(target)
-
+    input, target = np.asarray(input), np.asarray(target)
+    
+    for arr in [input, target]:
+        if dim(arr) == 0:
+            raise TypeError('data should be at least 1 dimensional')
+        
+    # insert a dimension if data is 1D
+    input = input[-1, None] if dim(input) == 1 else input
+    target = target[-1, None] if dim(target) == 1 else target
+    
     batches = BatchLoader(input, target, batch_size=bs)
     optimizer = Optimizer(optimizer, lr)
     loss_func = Loss(loss)

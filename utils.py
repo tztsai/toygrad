@@ -79,22 +79,6 @@ def onehot(x, k, *, cold=0, hot=1):
     return m
 
 
-def reshape2D(x, batch=True):
-    n = len(x) if batch else 1
-    return np.reshape(x, [n, -1])
-
-
-def discretize(x, splits):
-    """Discretize the data with the splitting points."""
-    for i, p in enumerate(splits):
-        l = splits[i - 1] if i else -np.inf
-        ids = (l < x) & (x <= p)
-        x[ids] = i
-        if i == len(splits) - 1:
-            x[x > p] = i + 1
-    return x
-    
-        
 @none_for_default
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
@@ -117,6 +101,17 @@ class BatchLoader:
         for i in self.steps:
             ids = order[i : i + self.batch_size]
             yield [a[ids] for a in self.data]
+            
+            
+def discretize(x, splits):
+    """Discretize the data with the splitting points."""
+    for i, p in enumerate(splits):
+        l = splits[i - 1] if i else -np.inf
+        ids = (l < x) & (x <= p)
+        x[ids] = i
+        if i == len(splits) - 1:
+            x[x > p] = i + 1
+    return x
 
 
 class Animation:

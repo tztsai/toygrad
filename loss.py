@@ -19,7 +19,7 @@ def get_loss(name: str):
         raise ValueError(f"unknown loss function: {name}")
 
 
-class Loss(Function, metaclass=make_meta(get_loss)):
+class Loss(Function, metaclass=makemeta(get_loss)):
     """Base class of loss functions."""
     
     @abstractmethod

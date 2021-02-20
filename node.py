@@ -4,49 +4,70 @@ from utils import *
 from devtools import *
 
 
-class Node(Function):
+NODES = {}
+
+
+def getnode(val):
+    """Converts integers or strings to nodes."""
+    if isinstance(val, int) and val > 0:
+        return Linear(val)  # interger -> Linear node
+    elif val == 'tanh':
+        return Tanh
+    elif val in ['logistic', 'sigmoid']:
+        return Logistic
+    elif val == 'relu':
+        return ReLU
+    elif val == 'linear':
+        return None
+    elif type(val) is str and val in NODES:
+        return NODES[val]
+    else:
+        raise ValueError(f"unknown node: {val}")
+
+
+class Node(Function, metaclass=makemeta(getnode)):
     """Base class of a computational node."""
 
-    def __init__(self, dim_out=None, dim_in=None):
+    def __init__(self, fan_out=None, fan_in=None):
         """Initialize a computational node.
 
         Args:
-            dim_out: the dimensionality of the output
-            dim_in: the dimensionality of the input
+            fan_out: the shape of the output
+                if there are multiple descendants, its shape should be a list, otherwise it can
+                be an integer, a tuple (when multi-dim) or a list containing a single item
+            fan_in: the shape of the input
+                the type is the same as fan_out
         """
         super().__init__()
-        self.dim_out = dim_out
-        self.dim_in = dim_in
+        self.fan_out = fan_out
+        self.fan_in = fan_in
         self.output = None
         self.input = None
+        self.error = None
         self.ascendants = []
         self.descendants = []
         self.training = True
         
+        self._fo = None  # private fan-out, always a list
+        self._fi = None  # private fan-in, always a list
         self._forward = super().__getattribute__("forward")
         self._backward = super().__getattribute__("backward")
         
         self._has_setup = False
-
-    # @property
-    # def _root(self):
-    #     if self.__root is None:
-    #         return None
-    #     else:
-    #         while (r := self.__root._root) is not None:
-    #             self.__root = r
-    #         return self.__root
-
-    # @_root.setter
-    # def _root(self, root):
-    #     self.__root = root
+        self._block = False  # block forward pass to prevent looping
         
-    def connect(self, node):
-        """Connect a node as a descendant."""
-        self.descendants.append(node)
-        node.ascendants.append(self)
-        # node._root = self._root
-        return node
+        self.id = hex(id(self))[-3:]
+        while self.id in NODES:
+            self.id = '0' + self.id
+        NODES[self.id] = self
+        
+    def connect(self, *nodes):
+        """Connect nodes as a descendant."""
+        for node in nodes:
+            node = Node(node)
+            self.descendants.append(node)
+            node.ascendants.append(self)
+        return node  # convenient for sequential connection
             
     @contextmanager
     def isolate(self):
@@ -59,46 +80,54 @@ class Node(Function):
         self.descendants = desc
         
     @abstractmethod
-    def setup(self, dim_in=None):
+    def setup(self, fan_in=None):
         """Initialize the parameters if the node has any."""
         if self._has_setup:
             dbg(f'{self} has been setup')
             return
             
-        asc_dim_out = [node.dim_out for node in self.ascendants]
+        # check fan-in
+        asc_fo = [node._fo[node.descendants.index(self)]
+                  for node in self.ascendants]
         
-        if dim_in is None:
-            dim_in = self.dim_in
+        if fan_in is None:
+            fan_in = self.fan_in
             
-        if dim_in is None:
-            dim_in = asc_dim_out
-            assert dim_in, f'dimensionality unspecified in {self}'
+        if fan_in is None:  # set to fan-out of ascendants by default
+            if not self.ascendants:
+                raise AssertionError(f'input shape unspecified in {self}')
+            fan_in = asc_fo
+        elif self.ascendants:
+            fan_in = expand(fan_in)
+            assert len(fan_in) == len(asc_fo), f'input shape mismatch in {self}'
+            for k, (no, ni) in enumerate(zip(asc_fo, fan_in)):
+                if no is None:
+                    raise AssertionError('output shape unspecified '
+                                         f'in {self.ascendants[k]}')
+                assert no == ni, f'input shape mismatch in {self}'
         
-        if self.ascendants:
-            for k, (do, di) in enumerate(
-                self._match_dim(asc_dim_out, dim_in)):
-                    if do is None:
-                        self.ascendants[k].dim_out = di
-                    else:
-                        dim_in[k] = do
-            
-        self.dim_in = squeeze(dim_in)
+        self._fi = fan_in
+        self.fan_in = squeeze(fan_in)
+        
+        # check fan-out
+        fan_out = expand(self.fan_out)
+        
+        if fan_out is None:
+            fan_out = fan_in  # the same as fan-in by default
+
+        if self.descendants:
+            assert len(fan_out) == len(self.descendants), \
+                f'output shape mismatch in {self}'
+
+        self._fo = fan_out
+        self.fan_out = squeeze(fan_out)
+        
         self._has_setup = True
+        dbg('Setup %s', self)
         
-    def _match_dim(self, d1, d2):
-        if dim(d1) == 0: d1 = [d1]
-        if dim(d2) == 0: d2 = [d2]
+        for node in self.descendants:
+            node.setup()
         
-        assert len(d1) == len(d2), f'dimensionality mismatch in {self}'
-        
-        for x, y in zip(d1, d2):
-            if x is None and y is None:
-                raise AssertionError(f'dimensionality unspecified in {self}')
-            elif (x is None) ^ (y is None):
-                yield x, y  # set the unspecified dim to the other one
-            else:
-                assert x == y, f'dimensionality mismatch in {self}'
-    
     def _match_pass(self, nodes, data):
         if not nodes:  # no nodes to pass
             return ()
@@ -107,7 +136,8 @@ class Node(Function):
             data = data,
             
         if type(data) is not tuple or len(data) != len(nodes):
-            raise AssertionError(f"arity mismatch in the forward/backward pass of {self}")
+            raise AssertionError("data shape mismatch when "
+                                 f"passing through {self}")
         
         return zip(nodes, data)
         
@@ -136,6 +166,8 @@ class Node(Function):
         When the user calls `forward`, `_wrapped_forward` will be called instead.
         The `forward` method implemented by a subclass is accessed via `self._forward`.
         """
+        if self._block: return
+        
         # call the inner forward method
         output = self._forward(*input)
         
@@ -143,10 +175,14 @@ class Node(Function):
         input = squeeze(input)
         self.input, self.output = input, output
         
+        # block to prevent infinite loop of forward pass
+        self._block = True
+        
         # pass forward the output
         for node, out in self._match_pass(self.descendants, output):
             node.forward(out)
             
+        self._block = False
         return output
 
     def _wrapped_backward(self, *error):
@@ -162,13 +198,14 @@ class Node(Function):
 
         # clear input and output records
         self.input = self.output = None
+        self.error = error
 
         # pass backward the error
         for node, err in self._match_pass(self.ascendants, error):
             node.backward(err)
             
         return error
-
+    
     def __setattr__(self, name, value):
         "Automatically keeps track of trainable parameters."
         if not hasattr(self, 'parameters'):
@@ -184,68 +221,89 @@ class Node(Function):
         super().__setattr__(name, value)
         
     def __str__(self):
-        return f'node({hex(id(self))[-3:]})'
+        return f'{type(self).__name__}({self.id})'
 
     def __repr__(self):
         nodetype = type(self).__name__
-        return nodetype + f'({self.dim_in}, {self.dim_out})'
+        return nodetype + f'({self.fan_in}, {self.fan_out})'
 
 
-class Compose(Node):
+class Network(Node):
     
-    def __init__(self, *nodes):
-        """Composes several nodes into one node."""
-        assert nodes, "no nodes are composed"
+    def __init__(self, nodenet: list, entry=None, exit=None):
+        """Accepts a list of node connections and wrap it into a single node."""
+        self.entry = entry
+        self.exit = exit
         
-        super().__init__(nodes[0].dim_in, nodes[-1].dim_out)
+        self.net = self.buildnet(nodenet)
         
-        self.nodes = nodes
-        for i in range(len(nodes) - 1):
-            nodes[i].connect(nodes[i + 1])
+        self.ascendants = self.entry.ascendants
+        self.descendants = self.exit.descendants
+        
+        super().__init__(self.exit.fan_out, self.entry.fan_in)
             
-    @property
-    def dim_in(self):
-        return self.nodes[0].dim_in
-    
-    @property
-    def dim_out(self):
-        return self.nodes[-1].dim_out
+    def buildnet(self, nodenet):
+        net = {}
+        entries, exits = [], []
+        
+        for node, desc in enumerate(nodenet):
+            if is_list(desc):
+                node.connect(*desc)
+                desc = list(desc)
+            else:
+                node.connect(desc)        
+                desc = [desc]
+                
+            net[node] = desc
             
-    def setup(self, dim_in=None):
-        for i, node in enumerate(self.nodes):
-            node.setup(None if i else dim_in)
+            if self.exit is None:
+                for d in desc:
+                    if d not in net:
+                        exits.append(d)
+                    
+        if self.entry is None:
+            for node in net:
+                if not any(node in desc for desc in net.values()):
+                    entries.append(node)
+                    
+        assert len(entries) == 1, "cannot find the entry of %s" % self
+        assert len(exits) == 1, "cannot find the exit of %s" % self
+        self.entry = entries[0]
+        self.exits = exits[0]
+        
+        return net
+            
+    def setup(self, fan_in=None):
+        self.entry.setup(fan_in)
         
     def forward(self, *input):
-        for node in self.nodes:
-            output = node.forward(*input)
-            input = output
-        return output
+        self.entry.forward(*input)
+        return self.exit.output
     
     def backward(self, *error):
-        for node in reversed(self.nodes):
-            error = node.backward(error)
-        return error
+        self.exit.backward(*error)
+        return self.entry.error
     
     def __repr__(self):
-        node_list = ', '.join(map(repr, self.nodes))
-        return f'Compose({node_list})'
+        # node_list = ', '.join(map(repr, self.nodes))
+        return f'Network({self.net})'
         
 
-class Affine(Node):
-    """Affine transformation."""
+class Linear(Node):
+    """Linear transformation (actually affine transformation if bias is nonzero)."""
 
-    def __init__(self, dim_out, dim_in=None, *, with_bias=True):
+    def __init__(self, fan_out, fan_in=None, *, with_bias=True):
         """
         Args:
-            with_bias: whether the affine transformation has a constant bias
+            with_bias: whether the Linear transformation has a constant bias
         """
-        super().__init__(dim_out, dim_in)
+        super().__init__(fan_out, fan_in)
         self.with_bias = with_bias
 
-    def setup(self, dim_in=None):
-        super().setup(dim_in)
-        # coefficients of the affine transformation
-        self.weights = Parameter(size=[self.dim_in + self.with_bias, self.dim_out])
+    def setup(self, fan_in=None):
+        super().setup(fan_in)
+        # coefficients of the Linear transformation
+        self.weights = Parameter(size=[self.fan_in + self.with_bias, self.fan_out])
 
     def forward(self, input):
         if self.with_bias:
@@ -267,7 +325,93 @@ class Affine(Node):
         if self.ascendants:
             # return the error passed to the previous layer
             return error @ self.weights[1:].T
+        
+        
+class Conv2D(Node):
+    """2D convolution transformation."""
+    
+    scan_step = 2
+    
+    def __init__(self, num_kernels, fan_in=None, kernel_width=2):
+        super().__init__(fan_in=fan_in)
+        self.k = kernel_width
+        
+    def setup(self, fan_in=None):
+        super().setup(fan_in=fan_in)
+        assert type(self.fan_in) is tuple and len(self.fan_in) == 2, \
+            f'input dimension of {self} must be 2D'
+            
+        self._grid = np.array(self._make_grid())
+        self.fan_out = (self.k, *self._grid.shape)
+        
+        self.kernels = Parameter(size=[self.num_kernels, 2*self.k + 1, 2*self.k + 1])
 
+    def convolve(self, x, kernel):
+        assert dim(x) == 2, 'data dimension should be 2D'
+        k = self.k
+        return [[np.sum(kernel * x[i-k:i+k+1, j-k:j+k+1]) for i, j in r]
+                for r in self._grid]
+        
+    def forward(self, input):
+        return np.array([[self.convolve(im, knl) for knl in self.kernels]
+                         for im in input])
+        
+    def _make_grid(self):
+        h, w = self.fan_in
+        return [[(i, j) for j in range(self.k, w - self.k, self.scan_step)]
+                for i in range(self.k, h - self.k, self.scan_step)]
+        
+        
+class Tanh(Node):
+    def forward(self, x):
+        return np.tanh(x)
+
+    def backward(self, error):
+        return error * (1 - self.output**2)
+
+
+class Logistic(Node):
+    def forward(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def backward(self, error):
+        return error * self.output * (1 - self.output)
+
+
+class ReLU(Node):
+    def forward(self, x):
+        return np.maximum(x, 0)
+
+    def backward(self, error):
+        return error * (self.output > 0)
+
+
+class SoftMax(Node):
+    def forward(self, x):
+        ex = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return ex / np.sum(ex, axis=1, keepdims=True)
+
+    def backward(self, error):
+        # TODO: not correct?
+        dp = np.sum(error * self.output, axis=1, keepdims=True)
+        return (error - dp) * self.output
+
+
+class Dropout(Node):
+    """Randonly deactivates some neurons to mitigate overfitting."""
+
+    def __init__(self, p):
+        super().__init__()
+        self.p = p
+        self._mask = None
+
+    def forward(self, x):
+        self._mask = bernoulli(self.fan_in, 1 - self.p) / (1 - self.p)
+        return self._mask * x
+
+    def backward(self, error):
+        return self._mask * error
+    
 
 class RBF(Node):
     """Radial-basis function."""
@@ -299,12 +443,12 @@ class RBF(Node):
         super().setup(dim)
 
         if centers is not None:
-            assert np.shape(centers) == (self.dim_out, self.dim_in), \
+            assert np.shape(centers) == (self.fan_out, self.fan_in), \
                 "the shape of the centers mismatches the RBF node"
             self.centers = Parameter(centers)
         else:
             # randomly initialize RBF centers
-            self.centers = Parameter(size=[self.dim_out, self.dim_in],
+            self.centers = Parameter(size=[self.fan_out, self.fan_in],
                                      mean=mean, scale=stddev)
 
         # compute the pair-wise distances between RBF centers
@@ -368,28 +512,24 @@ class RBF(Node):
         return repr[:-1] + ", sigma=%.2f" % self.sigma + ")"
 
 
-class Dropout(Node):
-    """Randonly deactivates some neurons to mitigate overfitting."""
-
-    def __init__(self, size, p):
-        super().__init__(size)
-        self.p = p
-        self.size = size
-        self._mask = None
-
-    def forward(self, x):
-        mask = bernoulli(self.size, 1 - self.p) / (1 - self.p)
-        self._mask = mask
-        return mask * x
-
-    def backward(self, err):
-        return self._mask * err
-
-
 # %% test
 if __name__ == '__main__':
-    a = Affine(5)
-    b = Affine(8)
+    a = Linear(5)
+    b = Linear(8)
     a.connect(b)
     a.setup(3)
     a(np.ones([10, 3]))
+
+    sigma = Node('tanh')
+    print(sigma(2))
+
+    relu = ReLU()
+    relu(np.random.rand(10, 3) - 0.5)
+    print(relu.backward(np.random.rand(10, 3)))
+
+    sm = SoftMax()
+    sm(np.random.rand(10, 3))
+    error = np.random.rand(10, 3)
+    for y, e, be in zip(sm.output, error, sm.backward(error)):
+        d1 = np.diag(y) - np.outer(y, y)
+        assert (d1 @ e == be).all()
