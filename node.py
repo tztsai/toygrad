@@ -28,6 +28,14 @@ def get_node(val):
 class Node(Function, metaclass=makemeta(get_node)):
     """Base class of a computational node."""
     
+    def __new__(cls):
+        node = object.__new__(cls)
+        node.id = hex(id(node))[-3:]
+        while node.id in NODES:
+            node.id = '0' + node.id
+        NODES[node.id] = node
+        return node
+    
     def __init__(self, fan_out=None, fan_in=None):
         """Initialize a computational node.
 
@@ -55,11 +63,6 @@ class Node(Function, metaclass=makemeta(get_node)):
         
         self._has_setup = False
         self._block = False  # block forward pass to prevent looping
-        
-        self.id = hex(id(self))[-3:]
-        while self.id in NODES:
-            self.id = '0' + self.id
-        NODES[self.id] = self
         
     def connect(self, *nodes):
         """Connect nodes as a descendant."""

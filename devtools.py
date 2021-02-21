@@ -87,7 +87,7 @@ def makemeta(getter):
             cln = self.__name__
             
             if type(self.__base__) is Meta:  # a subclass of the created class
-                obj = object.__new__(self)
+                obj = self.__new__(self)
                 obj.__init__(*args, **kwds)
                 return obj  # initialize as usual
             
@@ -96,7 +96,7 @@ def makemeta(getter):
             
             elif isinstance(obj := args[0], self):
                 if len(args) > 1 or kwds:  # return a new instance
-                    obj = object.__new__(type(args[0]))
+                    obj = self.__new__(type(args[0]))
                     obj.__init__(*args[1:], **kwds)
                 return obj
             
@@ -115,7 +115,7 @@ def makemeta(getter):
                     cls, ini_args = ret, ()
                     
                 assert issubclass(cls, self)
-                obj = object.__new__(cls)
+                obj = self.__new__(cls)
                 obj.__init__(*ini_args)
                 return obj
 
