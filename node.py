@@ -7,7 +7,7 @@ from devtools import *
 NODES = {}
 
 
-def getnode(val):
+def get_node(val):
     """Converts integers or strings to nodes."""
     if isinstance(val, int) and val > 0:
         return Linear(val)  # interger -> Linear node
@@ -25,9 +25,9 @@ def getnode(val):
         raise ValueError(f"unknown node: {val}")
 
 
-class Node(Function, metaclass=makemeta(getnode)):
+class Node(Function, metaclass=makemeta(get_node)):
     """Base class of a computational node."""
-
+    
     def __init__(self, fan_out=None, fan_in=None):
         """Initialize a computational node.
 
@@ -79,9 +79,8 @@ class Node(Function, metaclass=makemeta(getnode)):
         self.ascendants = asc
         self.descendants = desc
         
-    @abstractmethod
     def setup(self, fan_in=None):
-        """Initialize the parameters if the node has any."""
+        """Inherit from this method to initialize the trainable parameters."""
         if self._has_setup:
             dbg(f'{self} has been setup')
             return
@@ -225,28 +224,36 @@ class Node(Function, metaclass=makemeta(getnode)):
 
     def __repr__(self):
         nodetype = type(self).__name__
-        return nodetype + f'({self.fan_in}, {self.fan_out})'
+        shapes = tuple(f'{s}={d}' for s, d in
+                       zip(['in', 'out'], [self.fan_in, self.fan_out])
+                       if d is not None)
+        return nodetype + '(%s)' % ', '.join(shapes)
 
 
 class Network(Node):
     
-    def __init__(self, nodenet: list, entry=None, exit=None):
-        """Accepts a list of node connections and wrap it into a single node."""
+    def __init__(self, connections: list, entry=None, exit=None):
+        """Accepts a list of node connections and wrap it into a single node.
+        
+        Format of the connection list:
+            [[<node>, <child> or <list of children>], ...] (can also be a tuple)
+        """
         self.entry = entry
         self.exit = exit
         
-        self.net = self.buildnet(nodenet)
+        connections = deepmap(Node, connections)
+        self.nodes = self.buildnet(connections)
         
         self.ascendants = self.entry.ascendants
         self.descendants = self.exit.descendants
         
         super().__init__(self.exit.fan_out, self.entry.fan_in)
             
-    def buildnet(self, nodenet):
+    def buildnet(self, connections):
         net = {}
         entries, exits = [], []
         
-        for node, desc in enumerate(nodenet):
+        for node, desc in connections:
             if is_list(desc):
                 node.connect(*desc)
                 desc = list(desc)
@@ -266,10 +273,13 @@ class Network(Node):
                 if not any(node in desc for desc in net.values()):
                     entries.append(node)
                     
-        assert len(entries) == 1, "cannot find the entry of %s" % self
-        assert len(exits) == 1, "cannot find the exit of %s" % self
-        self.entry = entries[0]
-        self.exits = exits[0]
+        if self.entry is None:
+            self.entry = entries[0]
+            assert len(entries) == 1, "cannot find the entry of %s" % self
+            
+        if self.exit is None:
+            self.exits = exits[0]
+            assert len(exits) == 1, "cannot find the exit of %s" % self
         
         return net
             
@@ -286,8 +296,23 @@ class Network(Node):
     
     def __repr__(self):
         # node_list = ', '.join(map(repr, self.nodes))
-        return f'Network({self.net})'
+        return f'Network({self.nodes})'
+    
+    
+class Sequential(Network):
+    """Sequential network where each node only has at most one ascendant and one descendant."""
+    
+    def __init__(self, nodes):
+        nodes = list(map(Node, nodes))
+        self.nodes = nodes
+        self.entry = nodes[0]
+        self.exit = nodes[-1]
+        self.ascendants = self.entry.ascendants
+        self.descendants = self.exit.descendants
+        Node.__init__(self, self.exit.fan_out, self.entry.fan_in)
         
+    def __repr__(self):
+        return f'Sequential({self.nodes})'
 
 class Linear(Node):
     """Linear transformation (actually affine transformation if bias is nonzero)."""
@@ -514,22 +539,27 @@ class RBF(Node):
 
 # %% test
 if __name__ == '__main__':
-    a = Linear(5)
-    b = Linear(8)
-    a.connect(b)
-    a.setup(3)
-    a(np.ones([10, 3]))
+    seq = Sequential([
+        Linear(2, 5), 'tanh', Dropout(0.02),
+        5, Dropout(0.02), 'tanh', 1
+    ])
+    print(seq)
+    # a = Linear(5)
+    # b = Linear(8)
+    # a.connect(b)
+    # a.setup(3)
+    # a(np.ones([10, 3]))
 
-    sigma = Node('tanh')
-    print(sigma(2))
+    # sigma = Node('tanh')
+    # print(sigma(2))
 
-    relu = ReLU()
-    relu(np.random.rand(10, 3) - 0.5)
-    print(relu.backward(np.random.rand(10, 3)))
+    # relu = ReLU()
+    # relu(np.random.rand(10, 3) - 0.5)
+    # print(relu.backward(np.random.rand(10, 3)))
 
-    sm = SoftMax()
-    sm(np.random.rand(10, 3))
-    error = np.random.rand(10, 3)
-    for y, e, be in zip(sm.output, error, sm.backward(error)):
-        d1 = np.diag(y) - np.outer(y, y)
-        assert (d1 @ e == be).all()
+    # sm = SoftMax()
+    # sm(np.random.rand(10, 3))
+    # error = np.random.rand(10, 3)
+    # for y, e, be in zip(sm.output, error, sm.backward(error)):
+    #     d1 = np.diag(y) - np.outer(y, y)
+    #     assert (d1 @ e == be).all()

@@ -6,7 +6,7 @@ from tqdm import tqdm
 from functools import lru_cache, wraps
 from contextlib import contextmanager
 from copy import deepcopy
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
 from abc import abstractmethod
 
@@ -94,7 +94,7 @@ def makemeta(getter):
             elif len(args) < 1:
                 raise TypeError(f'{cln}() takes at least 1 argument')
             
-            elif isinstance(args[0], self):
+            elif isinstance(obj := args[0], self):
                 if len(args) > 1 or kwds:  # return a new instance
                     obj = object.__new__(type(args[0]))
                     obj.__init__(*args[1:], **kwds)
@@ -139,7 +139,7 @@ def parse_name(f):
 
 
 def is_list(x):
-    return isinstance(x, [list, tuple])
+    return isinstance(x, (list, tuple))
 
 
 def expand(x):
@@ -153,3 +153,10 @@ def squeeze(x):
         return x[0]
     except:
         return x
+    
+    
+def deepmap(f, l):
+    if is_list(l):
+        return [deepmap(f, it) for it in l]
+    else:
+        return f(l)
