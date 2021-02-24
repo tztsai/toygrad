@@ -47,97 +47,116 @@ class Node(Function, metaclass=makemeta(get_node)):
                 the type is the same as fan_out
         """
         super().__init__()
-        self.fan_out = fan_out
-        self.fan_in = fan_in
+        
         self.output = None
         self.input = None
-        self.error = None
+        # self.error = None
         self.ascendants = []
         self.descendants = []
         self.training = True
         
-        self._fo = None  # private fan-out, always a list
-        self._fi = None  # private fan-in, always a list
+        self._fi = self._fan_io(fan_in)
+        self._fo = self._fi if fan_out is None else self._fan_io(fan_out)
+        # if unspecified, fan-out is identical to fan-in
+        
         self._forward = super().__getattribute__("forward")
         self._backward = super().__getattribute__("backward")
         
         self._has_setup = False
         self._block = False  # block forward pass to prevent looping
         
+    @property
+    def fan_out(self):
+        return squeeze(self._fo)
+    
+    @property
+    def fan_in(self):
+        return squeeze(self._fi)
+    
+    @staticmethod
+    def _fan_io(shapes):
+        "Makes sure fan-in or fan-out is a list of shape tuples."
+        
+        def shapeof(x):
+            if x is None:
+                return None
+            elif type(x) is int:
+                return (x,)
+            elif type(x) is tuple:
+                assert all(type(y) is int for y in x)
+                return x
+            else:
+                raise AssertionError('invalid shape of fan-in/fan-out')
+        
+        if isinstance(shapes, list):
+            return [shapeof(x) for x in shapes]
+        else:
+            return [shapeof(shapes)]
+            
+        
     def connect(self, *nodes):
         """Connect nodes as a descendant."""
+        
+        assert len(self.descendants) < len(self._fo), \
+            f'{self} cannot connect more descendants'
+        
         for node in nodes:
             node = Node(node)
+            
+            # check fan-in and fan-out shapes
+            di = len(self.descendants)  # index of this descendant
+            fo = self._fo[di]           # fan-out of the connection to this descendant
+            
+            assert fo is not None, f'the {di}-th output shape is unspecified in {self}'
+            
+            ai = len(node.ascendants)   # index of self in this descendant's ascendants
+            fi = node._fi[ai]           # fan-in of its connection to self
+            
+            if node._fi[ai] is None:
+                node._fi[ai] = fo
+            else:
+                assert fi == fo, f'connection mismatch between {self} and {node}'
+            
             self.descendants.append(node)
             node.ascendants.append(self)
-        return node  # convenient for sequential connection
             
     @contextmanager
     def isolate(self):
+        """Isolate the node so that forward and backward pass will not affect its neighbors."""
+        
         asc = self.ascendants
         desc = self.descendants
         self.ascendants = []
         self.descendants = []
+        
         yield  # do sth with the node here
+        
         self.ascendants = asc
         self.descendants = desc
         
     def setup(self, fan_in=None):
         """Inherit from this method to initialize the trainable parameters."""
+        
         if self._has_setup:
-            dbg(f'{self} has been setup')
+            dbg(f'{self} has already been set up.')
             return
-            
-        # check fan-in
-        asc_fo = [node._fo[node.descendants.index(self)]
-                  for node in self.ascendants]
         
-        if fan_in is None:
-            fan_in = self.fan_in
-            
-        if fan_in is None:  # set to fan-out of ascendants by default
-            if not self.ascendants:
-                raise AssertionError(f'input shape unspecified in {self}')
-            fan_in = asc_fo
-        elif self.ascendants:
-            fan_in = expand(fan_in)
-            assert len(fan_in) == len(asc_fo), f'input shape mismatch in {self}'
-            for k, (no, ni) in enumerate(zip(asc_fo, fan_in)):
-                if no is None:
-                    raise AssertionError('output shape unspecified '
-                                         f'in {self.ascendants[k]}')
-                assert no == ni, f'input shape mismatch in {self}'
-        
-        self._fi = fan_in
-        self.fan_in = squeeze(fan_in)
-        
-        # check fan-out
-        fan_out = expand(self.fan_out)
-        
-        if fan_out is None:
-            fan_out = fan_in  # the same as fan-in by default
-
         if self.descendants:
-            assert len(fan_out) == len(self.descendants), \
-                f'output shape mismatch in {self}'
-
-        self._fo = fan_out
-        self.fan_out = squeeze(fan_out)
+            assert len(self._fo) == len(self.descendants), \
+                f'output ports of {self} not fully connected'
         
-        self._has_setup = True
-        dbg('Setup %s', self)
+        dbg('Setting up %s', self)
         
         for node in self.descendants:
             node.setup()
+            
+        self._has_setup = True
         
     def _match_pass(self, nodes, data):
-        if not nodes:  # no nodes to pass
+        if not nodes:  # no nodes to pass to
             return ()
         
-        if len(nodes) == 1:
-            data = data,
-            
-        if type(data) is not tuple or len(data) != len(nodes):
+        if len(data) != len(nodes):
             raise AssertionError("data shape mismatch when "
                                  f"passing through {self}")
         
@@ -145,6 +164,14 @@ class Node(Function, metaclass=makemeta(get_node)):
         
     @abstractmethod
     def forward(self, *input):
+        """Passes forward the input and returns the output.
+        
+        The input data should be in batches and `len(input)` should equal to `len(self._fi)`.
+        For the i-th input, its shape should be `(batch_size, *self._fi[i])`.
+        
+        If the node has multiple descendants, the output data should be a tuple; otherwise
+        it should be an array of shape `(batch_size, *self._fi[0])`.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -170,14 +197,28 @@ class Node(Function, metaclass=makemeta(get_node)):
         """
         if self._block: return
         
+        # check and reshape input
+        try:
+            assert len(input) == len(self._fi)
+            input = tuple(x.reshape(len(x), *fi) for x, fi in zip(input, self._fi))
+        except:
+            raise AssertionError(f'input data shape mismatches the fan-in of {self}')
+        
         # call the inner forward method
         output = self._forward(*input)
         
         # record input and output
-        input = squeeze(input)
-        self.input, self.output = input, output
+        self.input, self.output = squeeze(input), output
         
-        # block to prevent infinite loop of forward pass
+        # check the shape of output
+        if type(output) is not tuple: output = output,
+        try:
+            assert len(output) == len(self._fo)
+            assert all(y.shape[1:] == fo for y, fo in zip(output, self._fo))
+        except:
+            raise AssertionError(f'output data shape mismatches the fan-out of {self}')
+        
+        # block to prevent an infinite loop of forward pass
         self._block = True
         
         # pass forward the output
@@ -194,13 +235,20 @@ class Node(Function, metaclass=makemeta(get_node)):
         
         # backward is blocked by a descendant
         if any(e is None for e in error): return
+        
+        # check shape
+        assert len(error) == len(self._fo), f'error shape mismatches the fan-out of {self}'
 
         # call the inner backward method
         error = self._backward(*error)
 
         # clear input and output records
         self.input = self.output = None
-        self.error = error
+        # self.error = error
+        
+        # check shape after backward pass
+        if type(error) is not tuple: error = error,
+        assert len(error) == len(self._fi), f'error shape mismatches the fan-in of {self}'
 
         # pass backward the error
         for node, err in self._match_pass(self.ascendants, error):
@@ -257,7 +305,7 @@ class Network(Node):
         entries, exits = [], []
         
         for node, desc in connections:
-            if is_list(desc):
+            if is_seq(desc):
                 node.connect(*desc)
                 desc = list(desc)
             else:
@@ -305,7 +353,7 @@ class Network(Node):
 class Sequential(Network):
     """Sequential network where each node only has at most one ascendant and one descendant."""
     
-    def __init__(self, nodes):
+    def __init__(self, *nodes):
         nodes = list(map(Node, nodes))
         self.nodes = nodes
         self.entry = nodes[0]
@@ -328,8 +376,8 @@ class Linear(Node):
         super().__init__(fan_out, fan_in)
         self.with_bias = with_bias
 
-    def setup(self, fan_in=None):
-        super().setup(fan_in)
+    def setup(self):
+        super().setup()
         # coefficients of the Linear transformation
         self.weights = Parameter(size=[self.fan_in + self.with_bias, self.fan_out])
 
@@ -364,8 +412,8 @@ class Conv2D(Node):
         super().__init__(fan_in=fan_in)
         self.k = kernel_width
         
-    def setup(self, fan_in=None):
-        super().setup(fan_in=fan_in)
+    def setup(self):
+        super().setup()
         assert type(self.fan_in) is tuple and len(self.fan_in) == 2, \
             f'input dimension of {self} must be 2D'
             
@@ -467,8 +515,8 @@ class RBF(Node):
         self.update_neighbors = update_neighbors
         self.nb_radius = nb_radius
 
-    def setup(self, dim=None, *, centers=None, mean=0, stddev=1):
-        super().setup(dim)
+    def setup(self, centers=None, mean=0, stddev=1):
+        super().setup()
 
         if centers is not None:
             assert np.shape(centers) == (self.fan_out, self.fan_in), \
@@ -542,10 +590,10 @@ class RBF(Node):
 
 # %% test
 if __name__ == '__main__':
-    seq = Sequential([
+    seq = Sequential(
         Linear(2, 5), 'tanh', Dropout(0.02),
         5, Dropout(0.02), 'tanh', 1
-    ])
+    )
     print(seq)
     # a = Linear(5)
     # b = Linear(8)

@@ -138,25 +138,22 @@ def parse_name(f):
     return call
 
 
-def is_list(x):
-    return isinstance(x, (list, tuple))
-
-
-def expand(x):
-    "Expand x into a list if it is not one, except that x is None."
-    return x if type(x) is list or x is None else [x]
-    
-
 def squeeze(x):
     try:
-        assert len(x) == 1
-        return x[0]
+        if len(x) == 1:
+            return squeeze(x[0])
+        else:
+            return [squeeze(i) for i in x]
     except:
         return x
     
     
+def is_seq(x):
+    return isinstance(x, (list, tuple))
+    
+    
 def deepmap(f, l):
-    if is_list(l):
+    if is_seq(l):
         return [deepmap(f, it) for it in l]
     else:
         return f(l)
