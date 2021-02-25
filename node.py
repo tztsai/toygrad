@@ -1,7 +1,10 @@
+# %% Computational Nodes
+
 from function import Function
 from param import Parameter
 from utils import *
 from devtools import *
+from my_utils.utils import main
 
 
 NODES = {}
@@ -48,12 +51,13 @@ class Node(Function, metaclass=makemeta(get_node)):
         """
         super().__init__()
         
-        self.output = None
-        self.input = None
-        # self.error = None
         self.ascendants = []
         self.descendants = []
         self.training = True
+        
+        self.output = None
+        self.input = None
+        # self.error = None
         
         self._fi = self._fan_io(fan_in)
         self._fo = self._fi if fan_out is None else self._fan_io(fan_out)
@@ -103,6 +107,9 @@ class Node(Function, metaclass=makemeta(get_node)):
         for node in nodes:
             node = Node(node)
             
+            if node in self.descendants:
+                continue  # already connected
+            
             # check fan-in and fan-out shapes
             di = len(self.descendants)  # index of this descendant
             fo = self._fo[di]           # fan-out of the connection to this descendant
@@ -134,7 +141,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         self.ascendants = asc
         self.descendants = desc
         
-    def setup(self, fan_in=None):
+    def setup(self):
         """Inherit from this method to initialize the trainable parameters."""
         
         if self._has_setup:
@@ -153,10 +160,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         self._has_setup = True
         
     def _match_pass(self, nodes, data):
-        if not nodes:  # no nodes to pass to
-            return ()
-        
-        if len(data) != len(nodes):
+        if nodes and len(data) != len(nodes):
             raise AssertionError("data shape mismatch when "
                                  f"passing through {self}")
         
@@ -202,6 +206,7 @@ class Node(Function, metaclass=makemeta(get_node)):
             assert len(input) == len(self._fi)
             input = tuple(x.reshape(len(x), *fi) for x, fi in zip(input, self._fi))
         except:
+            print(input, self)
             raise AssertionError(f'input data shape mismatches the fan-in of {self}')
         
         # call the inner forward method
@@ -212,6 +217,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         
         # check the shape of output
         if type(output) is not tuple: output = output,
+        
         try:
             assert len(output) == len(self._fo)
             assert all(y.shape[1:] == fo for y, fo in zip(output, self._fo))
@@ -237,14 +243,17 @@ class Node(Function, metaclass=makemeta(get_node)):
         if any(e is None for e in error): return
         
         # check shape
-        assert len(error) == len(self._fo), f'error shape mismatches the fan-out of {self}'
+        try:
+            assert len(error) == len(self._fo)
+            error = tuple(e.reshape(len(e), *fo) for e, fo in zip(error, self._fo))
+        except:
+            raise AssertionError(f'error shape mismatches the fan-out of {self}')
 
         # call the inner backward method
         error = self._backward(*error)
 
         # clear input and output records
         self.input = self.output = None
-        # self.error = error
         
         # check shape after backward pass
         if type(error) is not tuple: error = error,
@@ -275,9 +284,9 @@ class Node(Function, metaclass=makemeta(get_node)):
 
     def __repr__(self):
         nodetype = type(self).__name__
-        shapes = tuple(f'{s}={d}' for s, d in
-                       zip(['in', 'out'], [self.fan_in, self.fan_out])
-                       if d is not None)
+        shapes = (tuple(f'{s}={d}' for s, d in
+                        zip(['in', 'out'], [self.fan_in, self.fan_out]))
+                  if self._fi is not self._fo else [])
         return nodetype + '(%s)' % ', '.join(shapes)
 
 
@@ -292,7 +301,6 @@ class Network(Node):
         self.entry = entry
         self.exit = exit
         
-        connections = deepmap(Node, connections)
         self.nodes = self.buildnet(connections)
         
         self.ascendants = self.entry.ascendants
@@ -302,41 +310,37 @@ class Network(Node):
             
     def buildnet(self, connections):
         net = {}
-        entries, exits = [], []
+        ascendants = set()
+        descendants = set()
         
         for node, desc in connections:
+            node = Node(node)
+            
             if is_seq(desc):
                 node.connect(*desc)
-                desc = list(desc)
             else:
                 node.connect(desc)        
-                desc = [desc]
                 
-            net[node] = desc
+            net[node] = node.descendants
             
-            if self.exit is None:
-                for d in desc:
-                    if d not in net:
-                        exits.append(d)
-                    
+            ascendants.add(node)
+            descendants.update(node.descendants)
+        
         if self.entry is None:
-            for node in net:
-                if not any(node in desc for desc in net.values()):
-                    entries.append(node)
-                    
-        if self.entry is None:
-            self.entry = entries[0]
+            entries = ascendants - descendants
             assert len(entries) == 1, "cannot find the entry of %s" % self
-            
+            self.entry = entries.pop()
+                    
         if self.exit is None:
-            self.exits = exits[0]
+            exits = descendants - ascendants
             assert len(exits) == 1, "cannot find the exit of %s" % self
+            self.exit = exits.pop()
         
         return net
+    
+    def setup(self):
+        self.entry.setup()
             
-    def setup(self, fan_in=None):
-        self.entry.setup(fan_in)
-        
     def forward(self, *input):
         self.entry.forward(*input)
         return self.exit.output
@@ -346,8 +350,8 @@ class Network(Node):
         return self.entry.error
     
     def __repr__(self):
-        # node_list = ', '.join(map(repr, self.nodes))
-        return f'Network({self.nodes})'
+        net_rep = ', '.join('%s -> [%s]' % (repr(n), seq_repr(d)) for n, d in self.nodes.items())
+        return f'Network({net_rep})'
     
     
 class Sequential(Network):
@@ -355,15 +359,12 @@ class Sequential(Network):
     
     def __init__(self, *nodes):
         nodes = list(map(Node, nodes))
+        connections = list(zip(nodes, nodes[1:]))
+        super().__init__(connections, nodes[0], nodes[-1])
         self.nodes = nodes
-        self.entry = nodes[0]
-        self.exit = nodes[-1]
-        self.ascendants = self.entry.ascendants
-        self.descendants = self.exit.descendants
-        Node.__init__(self, self.exit.fan_out, self.entry.fan_in)
-        
+
     def __repr__(self):
-        return f'Sequential({self.nodes})'
+        return f'Sequential({seq_repr(self.nodes)})'
 
 class Linear(Node):
     """Linear transformation (actually affine transformation if bias is nonzero)."""
@@ -406,11 +407,12 @@ class Linear(Node):
 class Conv2D(Node):
     """2D convolution transformation."""
     
-    scan_step = 2
+    scan_step = 1
     
     def __init__(self, num_kernels, fan_in=None, kernel_width=2):
         super().__init__(fan_in=fan_in)
-        self.k = kernel_width
+        self.nk = num_kernels
+        self.kw = kernel_width
         
     def setup(self):
         super().setup()
@@ -418,13 +420,13 @@ class Conv2D(Node):
             f'input dimension of {self} must be 2D'
             
         self._grid = np.array(self._make_grid())
-        self.fan_out = (self.k, *self._grid.shape)
+        self._fo = [(self.nk, *self._grid.shape[:-1])]
         
-        self.kernels = Parameter(size=[self.num_kernels, 2*self.k + 1, 2*self.k + 1])
+        self.kernels = Parameter(size=[self.nk, 2*self.kw + 1, 2*self.kw + 1])
 
     def convolve(self, x, kernel):
         assert dim(x) == 2, 'data dimension should be 2D'
-        k = self.k
+        k = self.kw
         return [[np.sum(kernel * x[i-k:i+k+1, j-k:j+k+1]) for i, j in r]
                 for r in self._grid]
         
@@ -434,8 +436,8 @@ class Conv2D(Node):
         
     def _make_grid(self):
         h, w = self.fan_in
-        return [[(i, j) for j in range(self.k, w - self.k, self.scan_step)]
-                for i in range(self.k, h - self.k, self.scan_step)]
+        return [[(i, j) for j in range(self.kw, w - self.kw, self.scan_step)]
+                for i in range(self.kw, h - self.kw, self.scan_step)]
         
         
 class Tanh(Node):
@@ -487,6 +489,9 @@ class Dropout(Node):
 
     def backward(self, error):
         return self._mask * error
+
+    def __repr__(self):
+        return 'Dropout(p=%.2f)' % self.p
     
 
 class RBF(Node):
@@ -589,24 +594,18 @@ class RBF(Node):
 
 
 # %% test
-if __name__ == '__main__':
+@main
+def test(*args):
     seq = Sequential(
-        Linear(2, 5), 'tanh', Dropout(0.02),
-        5, Dropout(0.02), 'tanh', 1
+        a := Linear(2, 5), 'tanh', Dropout(0.02),
+        b := Linear(5), Dropout(0.02), 'tanh',
+        c := Linear(1)
     )
-    print(seq)
-    # a = Linear(5)
-    # b = Linear(8)
-    # a.connect(b)
-    # a.setup(3)
-    # a(np.ones([10, 3]))
+    seq.setup()
 
-    # sigma = Node('tanh')
-    # print(sigma(2))
-
-    # relu = ReLU()
-    # relu(np.random.rand(10, 3) - 0.5)
-    # print(relu.backward(np.random.rand(10, 3)))
+    a(np.ones([10, 5]))
+    
+    return a
 
     # sm = SoftMax()
     # sm(np.random.rand(10, 3))
@@ -614,3 +613,4 @@ if __name__ == '__main__':
     # for y, e, be in zip(sm.output, error, sm.backward(error)):
     #     d1 = np.diag(y) - np.outer(y, y)
     #     assert (d1 @ e == be).all()
+

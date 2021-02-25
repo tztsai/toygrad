@@ -139,12 +139,12 @@ def parse_name(f):
 
 
 def squeeze(x):
-    try:
+    if is_seq(x):
         if len(x) == 1:
             return squeeze(x[0])
         else:
-            return [squeeze(i) for i in x]
-    except:
+            return type(x)(squeeze(i) for i in x)
+    else:
         return x
     
     
@@ -157,3 +157,10 @@ def deepmap(f, l):
         return [deepmap(f, it) for it in l]
     else:
         return f(l)
+    
+    
+def seq_repr(obj):
+    if is_seq(obj):
+        return ', '.join(map(str, deepmap(repr, obj)))
+    else:
+        return repr(obj)
