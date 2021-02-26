@@ -35,7 +35,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         node = object.__new__(cls)
         node.id = hex(id(node))[-3:]
         while node.id in NODES:
-            node.id = '0' + node.id
+            node.id = hex(rand.randint(16))[-1] + node.id
         NODES[node.id] = node
         return node
     
@@ -60,8 +60,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         # self.error = None
         
         self._fi = self._fan_io(fan_in)
-        self._fo = self._fi if fan_out is None else self._fan_io(fan_out)
-        # if unspecified, fan-out is identical to fan-in
+        self._fo = self._fan_io(fan_out)
         
         self._forward = super().__getattribute__("forward")
         self._backward = super().__getattribute__("backward")
@@ -152,7 +151,7 @@ class Node(Function, metaclass=makemeta(get_node)):
             assert len(self._fo) == len(self.descendants), \
                 f'output ports of {self} not fully connected'
         
-        dbg('Setting up %s', self)
+        dbg('setting up %s', self)
         
         for node in self.descendants:
             node.setup()
@@ -193,7 +192,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         else:
             return super().__getattribute__(attr)
 
-    def _wrapped_forward(self, *input):
+    def _wrapped_forward(self, *input, batch=True):
         """Wrapper of forward method to add preprocessing and postprocessing.
         
         When the user calls `forward`, `_wrapped_forward` will be called instead.
@@ -204,9 +203,9 @@ class Node(Function, metaclass=makemeta(get_node)):
         # check and reshape input
         try:
             assert len(input) == len(self._fi)
-            input = tuple(x.reshape(len(x), *fi) for x, fi in zip(input, self._fi))
+            input = tuple(np.reshape(x, [len(x) if batch else 1, *fi])
+                          for x, fi in zip(input, self._fi))
         except:
-            print(input, self)
             raise AssertionError(f'input data shape mismatches the fan-in of {self}')
         
         # call the inner forward method
@@ -215,12 +214,16 @@ class Node(Function, metaclass=makemeta(get_node)):
         # record input and output
         self.input, self.output = squeeze(input), output
         
-        # check the shape of output
-        if type(output) is not tuple: output = output,
+        # check and reshape output
+        if type(output) is not tuple:
+            output = output,
+        if not batch:
+            output = tuple(y[0] for y in output)
         
         try:
             assert len(output) == len(self._fo)
-            assert all(y.shape[1:] == fo for y, fo in zip(output, self._fo))
+            assert all((y.shape[1:] if batch else y.shape) == fo
+                       for y, fo in zip(output, self._fo))
         except:
             raise AssertionError(f'output data shape mismatches the fan-out of {self}')
         
@@ -231,8 +234,10 @@ class Node(Function, metaclass=makemeta(get_node)):
         for node, out in self._match_pass(self.descendants, output):
             node.forward(out)
             
+        # unblock to accept the next forward pass
         self._block = False
-        return output
+        
+        return output[0] if len(output) == 1 else output
 
     def _wrapped_backward(self, *error):
         """Wrapper of backward method to add preprocessing and postprocessing."""
@@ -280,13 +285,13 @@ class Node(Function, metaclass=makemeta(get_node)):
         super().__setattr__(name, value)
         
     def __str__(self):
-        return f'{type(self).__name__}({self.id})'
+        return f'{type(self).__name__}#{self.id}'
 
     def __repr__(self):
         nodetype = type(self).__name__
-        shapes = (tuple(f'{s}={d}' for s, d in
-                        zip(['in', 'out'], [self.fan_in, self.fan_out]))
-                  if self._fi is not self._fo else [])
+        shapes = tuple(f'{s}={d}' for s, d in
+                       zip(['in', 'out'],
+                           [self.fan_in, self.fan_out]))
         return nodetype + '(%s)' % ', '.join(shapes)
 
 
@@ -409,90 +414,39 @@ class Conv2D(Node):
     
     scan_step = 1
     
-    def __init__(self, num_kernels, fan_in=None, kernel_width=2):
+    def __init__(self, num_filters, fan_in=None, filter_width=2):
         super().__init__(fan_in=fan_in)
-        self.nk = num_kernels
-        self.kw = kernel_width
+        self.nf = num_filters
+        self.fw = filter_width
         
     def setup(self):
         super().setup()
         assert type(self.fan_in) is tuple and len(self.fan_in) == 2, \
             f'input dimension of {self} must be 2D'
             
-        self._grid = np.array(self._make_grid())
-        self._fo = [(self.nk, *self._grid.shape[:-1])]
+        self._grid = self._make_grid()
+        self._fo = [(self.nf, len(self._grid), len(self._grid[0]))]
         
-        self.kernels = Parameter(size=[self.nk, 2*self.kw + 1, 2*self.kw + 1])
+        self.filters = Parameter(size=[self.nf, 2*self.fw + 1, 2*self.fw + 1])
 
-    def convolve(self, x, kernel):
+    def convolve(self, x, filter):
         assert dim(x) == 2, 'data dimension should be 2D'
-        k = self.kw
-        return [[np.sum(kernel * x[i-k:i+k+1, j-k:j+k+1]) for i, j in r]
-                for r in self._grid]
+        k = self.fw
+        return np.array([[np.sum(filter * x[rect]) for rect in row]
+                         for row in self._grid])
         
     def forward(self, input):
-        return np.array([[self.convolve(im, knl) for knl in self.kernels]
+        return np.array([[self.convolve(im, ft) for ft in self.filters]
                          for im in input])
         
     def _make_grid(self):
+        "Makes a grid of array slices."
         h, w = self.fan_in
-        return [[(i, j) for j in range(self.kw, w - self.kw, self.scan_step)]
-                for i in range(self.kw, h - self.kw, self.scan_step)]
-        
-        
-class Tanh(Node):
-    def forward(self, x):
-        return np.tanh(x)
+        k = self.fw
+        return [[(slice(i-k, i+k+1), slice(j-k, j+k+1))
+                 for j in range(k, w - k, self.scan_step)]
+                for i in range(k, h - k, self.scan_step)]
 
-    def backward(self, error):
-        return error * (1 - self.output**2)
-
-
-class Logistic(Node):
-    def forward(self, x):
-        return 1 / (1 + np.exp(-x))
-
-    def backward(self, error):
-        return error * self.output * (1 - self.output)
-
-
-class ReLU(Node):
-    def forward(self, x):
-        return np.maximum(x, 0)
-
-    def backward(self, error):
-        return error * (self.output > 0)
-
-
-class SoftMax(Node):
-    def forward(self, x):
-        ex = np.exp(x - np.max(x, axis=1, keepdims=True))
-        return ex / np.sum(ex, axis=1, keepdims=True)
-
-    def backward(self, error):
-        # TODO: not correct?
-        dp = np.sum(error * self.output, axis=1, keepdims=True)
-        return (error - dp) * self.output
-
-
-class Dropout(Node):
-    """Randonly deactivates some neurons to mitigate overfitting."""
-
-    def __init__(self, p):
-        super().__init__()
-        self.p = p
-        self._mask = None
-
-    def forward(self, x):
-        self._mask = bernoulli(self.fan_in, 1 - self.p) / (1 - self.p)
-        return self._mask * x
-
-    def backward(self, error):
-        return self._mask * error
-
-    def __repr__(self):
-        return 'Dropout(p=%.2f)' % self.p
-    
 
 class RBF(Node):
     """Radial-basis function."""
@@ -592,6 +546,70 @@ class RBF(Node):
         repr = super().__repr__()
         return repr[:-1] + ", sigma=%.2f" % self.sigma + ")"
 
+                
+class Activation(Node):
+    def __init__(self):
+        super().__init__()
+        self._fi = self._fo
+        
+    def __repr__(self):
+        return type(self).__name__ + '()'
+        
+        
+class Tanh(Activation):
+    def forward(self, x):
+        return np.tanh(x)
+
+    def backward(self, error):
+        return error * (1 - self.output**2)
+
+
+class Logistic(Activation):
+    def forward(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def backward(self, error):
+        return error * self.output * (1 - self.output)
+
+
+class ReLU(Activation):
+    def forward(self, x):
+        return np.maximum(x, 0)
+
+    def backward(self, error):
+        return error * (self.output > 0)
+
+
+class SoftMax(Activation):
+    def forward(self, x):
+        ex = np.exp(x - np.max(x, axis=1, keepdims=True))
+        return ex / np.sum(ex, axis=1, keepdims=True)
+
+    def backward(self, error):
+        # TODO: not correct?
+        dp = np.sum(error * self.output, axis=1, keepdims=True)
+        return (error - dp) * self.output
+
+
+class Dropout(Activation):
+    """Randonly deactivates some neurons to mitigate overfitting."""
+
+    def __init__(self, p):
+        super().__init__()
+        self.p = p
+        self._mask = None
+
+    def forward(self, x):
+        self._mask = bernoulli(self.fan_in, 1 - self.p) / (1 - self.p)
+        return self._mask * x
+
+    def backward(self, error):
+        return self._mask * error
+
+    def __repr__(self):
+        return 'Dropout(p=%.2f)' % self.p
+    
+
 
 # %% test
 @main
@@ -608,8 +626,8 @@ def test(*args):
     return a
 
     # sm = SoftMax()
-    # sm(np.random.rand(10, 3))
-    # error = np.random.rand(10, 3)
+    # sm(rand.rand(10, 3))
+    # error = rand.rand(10, 3)
     # for y, e, be in zip(sm.output, error, sm.backward(error)):
     #     d1 = np.diag(y) - np.outer(y, y)
     #     assert (d1 @ e == be).all()

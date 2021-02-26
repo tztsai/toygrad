@@ -1,23 +1,24 @@
 import numpy as np
+import numpy.random as rand
 import matplotlib.pyplot as plt
 import numbers
 from devtools import *
 
 
 SEED = 1
-np.random.seed(SEED)
+rand.seed(SEED)
 
         
 def bernoulli(size, p=0.5):
     if len(np.shape(size)) == 0:
         size = [size]
-    return (np.random.rand)(*size) < p
+    return (rand.rand)(*size) < p
 
 
 def gaussian(size, mu=0, sigma=1):
     data = []
     for m, s in np.broadcast(mu, sigma):
-        data.append(np.random.normal(loc=m, scale=s, size=size))
+        data.append(rand.normal(loc=m, scale=s, size=size))
     return np.array(data).T
 
 
@@ -43,7 +44,7 @@ def join_classes(*classes, labels=None):
     x = np.vstack(classes)
     y = np.hstack([[l] * len(c) for c, l in zip(classes, labels)])[:, None]
     data = np.hstack([y, x])
-    np.random.shuffle(data)
+    rand.shuffle(data)
     return data[:, 1:], data[:, 0].astype(np.int)
 
 
@@ -97,7 +98,7 @@ class BatchLoader:
         return len(self.steps)
 
     def __iter__(self):
-        order = np.random.permutation(self.size)
+        order = rand.permutation(self.size)
         for i in self.steps:
             ids = order[i : i + self.batch_size]
             yield [a[ids] for a in self.data]

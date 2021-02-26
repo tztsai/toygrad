@@ -34,7 +34,7 @@ input_dim = np.prod(im_size)
 autoencoder = Sequential(input_dim, 30, 10, 30, input_dim, activation='logistic')
 autoencoder.fit(x_train, x_train, epochs=10)
 
-x_sample = x_test[np.random.randint(1000, size=8)]
+x_sample = x_test[rand.randint(1000, size=8)]
 output = autoencoder.forward(x_sample)
 
 for i in range(8):
@@ -54,7 +54,7 @@ plt.show()
 # %%
 n = 8
 xrange = np.linspace(0, 1, num=n)
-# sample_ids = np.random.randint(100, size=n)
+# sample_ids = rand.randint(100, size=n)
 sample_ids = range(8)
 x_sample = autoencoder.forward(x_test[sample_ids])
 encoding = autoencoder.layers[1]._output

@@ -25,6 +25,7 @@ class LogFormatter(logging.Formatter):
     def format(self, record):
         dct = record.__dict__
         fmt = LogFormatter.formats.get(record.levelno, self._fmt)
+        record.msg = record.msg % record.args
         return fmt % dct
         
 

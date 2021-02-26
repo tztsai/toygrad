@@ -16,4 +16,4 @@ a.connect(tanh1).connect(b).connect(tanh2).connect(c).connect(sm)
 model = Model(a, sm)
 
 # %%
-print(model(np.random.rand(10, 5)))
+print(model(rand.rand(10, 5)))
