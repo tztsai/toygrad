@@ -9,7 +9,7 @@ from init import *
 img = imread('data/mario.jpg')  # RGB
 img = img.mean(axis=-1)    # gray
 
-conv = node.Conv2D(4, fan_in=img.shape, filter_width=1)
+conv = node.Conv2D(4, fan_in=img.shape)
 conv.setup()
 
 blur = np.array([[.1, .1, .1],
@@ -29,7 +29,6 @@ edgy_img1 = conv.convolve(img, edgy)
 edgy_img2 = conv.convolve(img, edgy.T)
 
 conv.filters = node.Parameter([blur, sharp, edgy, edgy.T])
-print(conv.filters.shape)
 
 plt.subplot(1, 3, 1)
 plt.imshow(img, cmap='gray')

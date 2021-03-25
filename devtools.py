@@ -151,17 +151,32 @@ def squeeze(x):
     
 def is_seq(x):
     return isinstance(x, (list, tuple))
-    
-    
-def deepmap(f, l):
-    if is_seq(l):
-        return [deepmap(f, it) for it in l]
-    else:
-        return f(l)
+
+
+def is_pair(x):
+    return isinstance(x, tuple) and len(x) == 2
     
     
 def seq_repr(obj):
     if is_seq(obj):
-        return ', '.join(map(str, deepmap(repr, obj)))
+        return ', '.join(map(str, map(repr, obj)))
     else:
         return repr(obj)
+
+
+def slice_grid(h, w, sh, sw, dh=1, dw=1):
+    return [[(slice(i, i+sh), slice(j, j+sw))
+             for j in range(0, w - sw, dh)]
+            for i in range(0, h - sh, dw)]
+
+
+def int_or_pair(x):
+    if type(x) == int:
+        y = x
+    else:
+        x, y = x
+        assert type(x) is int and type(y) is int
+    return x, y
+
+# def map_grid(f, grid):
+    

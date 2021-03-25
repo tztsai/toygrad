@@ -95,36 +95,48 @@ class Node(Function, metaclass=makemeta(get_node)):
             return [shapeof(x) for x in shapes]
         else:
             return [shapeof(shapes)]
-            
-        
+
     def connect(self, *nodes):
         """Connect nodes as a descendant."""
-        
-        assert len(self.descendants) < len(self._fo), \
-            f'{self} cannot connect more descendants'
-        
         for node in nodes:
             node = Node(node)
+            if node not in self.descendants:
+                self._add_descendant(node)
+                node._add_ascendant(self)
             
-            if node in self.descendants:
-                continue  # already connected
+    def _add_descendant(self, node):
+        assert len(self.descendants) < len(self._fo), \
+            f'{self} cannot connect more descendants'
             
-            # check fan-in and fan-out shapes
-            di = len(self.descendants)  # index of this descendant
-            fo = self._fo[di]           # fan-out of the connection to this descendant
+        di = len(self.descendants)
+        # index of this descendant
+        fo = self._fo[di]
+        # fan-out of the connection to this descendant
+
+        assert fo is not None, f'the {di}-th output shape is unspecified in {self}'
+
+        self.descendants.append(node)
+    
+    def _add_ascendant(self, node):
+        assert len(self.ascendants) < len(self._fi), \
+            f'{self} cannot connect more ascendants'
+        assert self in node.descendants, \
+            'use _add_descendant before _add_ascendant!'
             
-            assert fo is not None, f'the {di}-th output shape is unspecified in {self}'
-            
-            ai = len(node.ascendants)   # index of self in this descendant's ascendants
-            fi = node._fi[ai]           # fan-in of its connection to self
-            
-            if node._fi[ai] is None:
-                node._fi[ai] = fo
-            else:
-                assert fi == fo, f'connection mismatch between {self} and {node}'
-            
-            self.descendants.append(node)
-            node.ascendants.append(self)
+        ai = len(self.ascendants)
+        # index of this ascendant
+        fi = self._fi[ai]
+        # fan-in of the connection to this ascendant
+        fo = node._fo[node.descendants.index(self)]
+        # fan-out of the ascendant connected to self
+        
+        if fi is None:
+            self._fi[ai] = fo
+        elif fi != fo:
+            node.descendants.remove(self)
+            raise AssertionError(f'connection mismatch between {self} and {node}')
+        
+        node.ascendants.append(self)
             
     @contextmanager
     def isolate(self):
@@ -370,6 +382,7 @@ class Sequential(Network):
 
     def __repr__(self):
         return f'Sequential({seq_repr(self.nodes)})'
+    
 
 class Linear(Node):
     """Linear transformation (actually affine transformation if bias is nonzero)."""
@@ -412,41 +425,70 @@ class Linear(Node):
 class Conv2D(Node):
     """2D convolution transformation."""
     
-    scan_step = 1
-    
-    def __init__(self, num_filters, fan_in=None, filter_width=2):
+    def __init__(self, num_filters, fan_in=None, filter_size=3, stride=1):
         super().__init__(fan_in=fan_in)
         self.nf = num_filters
-        self.fw = filter_width
+        self.filter_size = int_or_pair(filter_size)
+        self.stride = int_or_pair(stride)
+        self._grid = None
         
     def setup(self):
         super().setup()
-        assert type(self.fan_in) is tuple and len(self.fan_in) == 2, \
-            f'input dimension of {self} must be 2D'
-            
-        self._grid = self._make_grid()
-        self._fo = [(self.nf, len(self._grid), len(self._grid[0]))]
-        
-        self.filters = Parameter(size=[self.nf, 2*self.fw + 1, 2*self.fw + 1])
 
-    def convolve(self, x, filter):
-        assert dim(x) == 2, 'data dimension should be 2D'
-        k = self.fw
-        return np.array([[np.sum(filter * x[rect]) for rect in row]
+        assert is_pair(self.fan_in), f'input dimension of {self} must be 2D'
+
+        self._grid = slice_grid(*self.fan_in, *self.filter_size, *self.stride)
+        self._fo = [(self.nf, *np.shape(self._grid)[:-1])]
+        
+        self.filters = Parameter(size=[self.nf, *self.filter_size])
+
+    def convolve(self, img, filter):
+        assert dim(img) == 2, 'data dimension should be 2D'
+        return np.array([[np.sum(filter * img[w]) for w in row]
                          for row in self._grid])
         
     def forward(self, input):
-        return np.array([[self.convolve(im, ft) for ft in self.filters]
-                         for im in input])
+        return np.array([[self.convolve(x, f) for f in self.filters]
+                         for x in input])
         
-    def _make_grid(self):
-        "Makes a grid of array slices."
-        h, w = self.fan_in
-        k = self.fw
-        return [[(slice(i-k, i+k+1), slice(j-k, j+k+1))
-                 for j in range(k, w - k, self.scan_step)]
-                for i in range(k, h - k, self.scan_step)]
+    def backward(self, *error):
+        raise NotImplementedError  # TODO
 
+
+class Pool2D(Node):
+    """Baseclass of 2D Pooling."""
+    
+    def __init__(self, size=(2, 2)):
+        super().__init__()
+        self.size = int_or_pair(size)
+        
+    def setup(self):
+        super().setup()
+        
+        assert is_pair(self.fan_in), f'input dimension of {self} must be 2D'
+        
+        self._grid = slice_grid(*self.fan_in, *self.size, *self.size)
+        self._fo = [np.shape(self._grid)[:-1]]
+        
+    @abstractmethod
+    def map(self, window):
+        raise NotImplementedError
+    
+    def forward(self, input):
+        return np.array([[[self.map(x[w]) for w in row]
+                          for row in self._grid]
+                         for x in input])
+        
+        
+class MaxPool2D(Pool2D):
+    def map(self, window):
+        return window.max()
+    
+    
+class MeanPool2D(Pool2D):
+    def map(self, window):
+        return window.mean()
+        
 
 class RBF(Node):
     """Radial-basis function."""
