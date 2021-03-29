@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 
 # logging config
@@ -55,12 +55,11 @@ def pbar(iterable, **kwds):
     return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
 
 
-def none_for_default(cls):
+def DefaultNone(cls):
     """A class decorator that changes the `__getattribute__` method so that for
        instances of the decorated class, if any of its instance attribute is None and
        the corresponding class attribute exists, then returns the class attribute instead.
     """
-
     # keep the original __getattribute__ method
     getattribute = cls.__getattribute__
 
@@ -119,9 +118,33 @@ def makemeta(getter):
                 obj = self.__new__(cls)
                 obj.__init__(*ini_args)
                 return obj
-
     return Meta
 
+
+def swap_methods(*args):
+    """Swap method names of a class.
+    Args: a pair of str or list"""
+    if type(args[0]) is str:
+        swap = {args[0]: args[1]}
+    else:
+        swap = dict(zip(*args))
+    swap.update([[b, a] for a, b in swap.items()])
+
+    def deco(cls):
+        def __getattribute__(self, name):
+            if name in swap:
+                name = swap[name]
+            return getattr(self, name)
+        getattr = cls.__getattribute__
+        cls.__getattribute__ = __getattribute__
+        return cls
+
+    return deco
+
+    
+# def staticclass(cls):
+#     def __new__(cls, *args, **kwds):
+        
 
 def decorator(dec):
     @wraps(dec)
@@ -177,6 +200,4 @@ def int_or_pair(x):
         x, y = x
         assert type(x) is int and type(y) is int
     return x, y
-
-# def map_grid(f, grid):
     

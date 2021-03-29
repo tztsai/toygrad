@@ -1,13 +1,12 @@
 import numpy as np
 import pickle
-from optimizer import Optimizer
-from function import Function
+from optim import Optimizer
+from function import Function, Node
 from loss import Loss
-from node import Node
 from utils import *
 
 
-class Model(Function):
+class Model:
     """A neural network model."""
     
     def __init__(self, entry: Node, exit: Node = None):

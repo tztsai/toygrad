@@ -11,7 +11,7 @@ def get_optimizer(name: str):
         raise ValueError(f"unknown optimizer: {name}")
 
 
-@none_for_default
+@DefaultNone
 class Optimizer(metaclass=makemeta(get_optimizer)):
     """Base class of an optimizer."""
     learning_rate = 1e-2

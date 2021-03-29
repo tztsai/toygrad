@@ -33,3 +33,8 @@
 * [ ] implement LSTM ?
   * [ ] train an RNN to generate text imitating 史记
 * [ ] implement GAN ?
+
+
+Update Function:
+I should implement two things for a Function: its gradient of output wrt. input,
+and its gradient of output wrt. weights.

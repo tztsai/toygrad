@@ -1,6 +1,12 @@
+import os
+import functools
+import inspect
+import sys
+import time
 import numpy as np
 import numpy.random as rand
 import matplotlib.pyplot as plt
+from collections import defaultdict
 import numbers
 from devtools import *
 
@@ -8,12 +14,8 @@ from devtools import *
 SEED = 1
 rand.seed(SEED)
 
-        
-def bernoulli(size, p=0.5):
-    if len(np.shape(size)) == 0:
-        size = [size]
-    return (rand.rand)(*size) < p
-
+def bernoulli(*size, p=0.5):
+    return rand.rand(*size) < p
 
 def gaussian(size, mu=0, sigma=1):
     data = []
@@ -21,13 +23,23 @@ def gaussian(size, mu=0, sigma=1):
         data.append(rand.normal(loc=m, scale=s, size=size))
     return np.array(data).T
 
-
 def dim(x):
     return len(np.shape(x))
 
-
-def sign(x, eps=1e-15):
+def sign(x, eps=0):
     return (x >= -eps) * 2 - 1
+
+def compose(f, g):
+    def h(*args, **kwds):
+        return f(g(*args, **kwds))
+    h.__name__ = f'<composed: {f.__name__} {g.__name__}>'
+    return h
+
+def onehot(x, k, *, cold=0, hot=1):
+    m = np.full((len(x), k), cold, dtype=np.int)
+    for i, j in enumerate(x):
+        m[i, j] = hot
+    return m
 
 
 def join_classes(*classes, labels=None):
@@ -47,7 +59,6 @@ def join_classes(*classes, labels=None):
     rand.shuffle(data)
     return data[:, 1:], data[:, 0].astype(np.int)
 
-
 def plot_dataset(points, labels, ax=plt, **kwds):
     labels = labels.squeeze()
     assert len(np.shape(labels)) == 1
@@ -61,7 +72,6 @@ def plot_dataset(points, labels, ax=plt, **kwds):
         points = np.array(points)
         ax.plot(points[:,0], points[:,1], 'o', **kwds)
 
-
 def plot_history(history, *args, title=None, **kwds):
     fig, ax = plt.subplots()
     
@@ -73,14 +83,7 @@ def plot_history(history, *args, title=None, **kwds):
     ax.legend()
     
 
-def onehot(x, k, *, cold=0, hot=1):
-    m = np.full((len(x), k), cold, dtype=np.int)
-    for i, j in enumerate(x):
-        m[i, j] = hot
-    return m
-
-
-@none_for_default
+@DefaultNone
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
     batch_size = 16
@@ -199,8 +202,8 @@ def mesh_grid(xlim, ylim, size=(100, 100)):
     return grid
 
 
-def pred_anim(x, y, show_data=True, splits=[]):
-    """Animates the predictions during NN training.
+def anim_train(x, y, show_data=True, splits=[]):
+    """Animates the NN training.
     
     Args:
         x, y: the training data
@@ -225,14 +228,37 @@ def pred_anim(x, y, show_data=True, splits=[]):
 def hist_anim():
     """Animates the training history of the NN."""
     anim = None
-    
     def callback(env):
         nonlocal anim
         history = env['history']
-        
         if anim is None:
             anim = CurveAnim(history.keys())
-            
         anim.update(*history.values())
-        
     return callback
+
+
+# **** profiler ****
+DEBUG = os.getenv("DEBUG", None) is not None
+if DEBUG:
+    import atexit
+    import time
+    debug_counts, debug_times = defaultdict(int), defaultdict(float)
+
+    def print_debug_exit():
+        for name, _ in sorted(debug_times.items(), key=lambda x: -x[1]):
+            print(f"{name:>20} : {debug_counts[name]:>6}",
+                  f"{debug_times[name]:>10.2f} ms")
+    atexit.register(print_debug_exit)
+
+class ProfileOp:
+    def __init__(self, name, x, backward=False):
+        self.name, self.x = f"back_{name}" if backward else name, x
+
+    def __enter__(self):
+        if DEBUG: self.st = time.time()
+
+    def __exit__(self, *junk):
+        et = (time.time()-self.st)*1000.
+        debug_counts[self.name] += 1
+        debug_times[self.name] += et
+        print(f"{self.name:>20} : {et:>7.2f} ms {[y.shape for y in self.x]}")

@@ -1,14 +1,12 @@
-# %% Computational Nodes
-
-from function import Function
 from param import Parameter
 from utils import *
 from devtools import *
 from my_utils.utils import main
 
 
-NODES = {}
+# %% Computational Nodes
 
+NODES = {}
 
 def get_node(val):
     """Converts integers or strings to nodes."""
@@ -28,7 +26,9 @@ def get_node(val):
         raise ValueError(f"unknown node: {val}")
 
 
-class Node(Function, metaclass=makemeta(get_node)):
+@swap_methods('forward', '_forward')
+@swap_methods('backward', '_backward')
+class Node(ABC, metaclass=makemeta(get_node)):
     """Base class of a computational node."""
     
     def __new__(cls):
@@ -61,9 +61,6 @@ class Node(Function, metaclass=makemeta(get_node)):
         
         self._fi = self._fan_io(fan_in)
         self._fo = self._fan_io(fan_out)
-        
-        self._forward = super().__getattribute__("forward")
-        self._backward = super().__getattribute__("backward")
         
         self._has_setup = False
         self._block = False  # block forward pass to prevent looping
@@ -187,11 +184,11 @@ class Node(Function, metaclass=makemeta(get_node)):
         If the node has multiple descendants, the output data should be a tuple; otherwise
         it should be an array of shape `(batch_size, *self._fi[0])`.
         """
-        raise NotImplementedError
+        NotImplemented
 
     @abstractmethod
     def backward(self, *error):
-        raise NotImplementedError
+        NotImplemented
     
     def state(self):
         return self.__dict__.copy()
@@ -204,7 +201,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         else:
             return super().__getattribute__(attr)
 
-    def _wrapped_forward(self, *input, batch=True):
+    def _forward(self, *input, batch=True):
         """Wrapper of forward method to add preprocessing and postprocessing.
         
         When the user calls `forward`, `_wrapped_forward` will be called instead.
@@ -251,7 +248,7 @@ class Node(Function, metaclass=makemeta(get_node)):
         
         return output[0] if len(output) == 1 else output
 
-    def _wrapped_backward(self, *error):
+    def _backward(self, *error):
         """Wrapper of backward method to add preprocessing and postprocessing."""
         # has not passed forward new input
         if self.output is None: return
@@ -651,7 +648,6 @@ class Dropout(Activation):
     def __repr__(self):
         return 'Dropout(p=%.2f)' % self.p
     
-
 
 # %% test
 @main
