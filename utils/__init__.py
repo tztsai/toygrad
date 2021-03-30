@@ -3,6 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
+from .tree import *
+from .dev import DefaultNone
+
 
 def dim(x):
     return len(np.shape(x))
@@ -15,22 +18,16 @@ def onehot(x, k, *, cold=0, hot=1):
     return m
 
 
-def computation_tree(param):
+def computation_tree(param, type=ascii_tree):
+    "If you just want a list, pass type=list."
     def dfs(y, visited={None}):
         try: ctx = y._ctx
-        except: return
-        if ctx in visited: return
+        except: return y
+        if ctx in visited: return y
         visited.add(ctx)
-        tree = [y, ctx, [dfs(x, visited) for x in ctx.parents]]
-    return dfs(param)
-
-
-def print_comptree(param):
-    # import pprint
-    # ps = pprint.pformat(param)
-    
-    ps = str(param)
-
+        op = ctx.__class__
+        return [y, [op, *[dfs(x, visited) for x in ctx.parents]]]
+    return type(dfs(param))
 
 
 @DefaultNone

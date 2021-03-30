@@ -1,5 +1,5 @@
 import numpy as np
-from utils import *
+from utils.dev import *
 
 
 class Parameter(np.ndarray):
@@ -52,8 +52,8 @@ class Parameter(np.ndarray):
     @grad.setter
     def grad(self, grad):
         if not self.learnable: return
-        elif np.shape(grad) == ():  # a scalar
-            grad = np.full_like(self, grad)
+        elif not np.shape(grad):  # a scalar
+            grad = np.full(self.shape, grad)
         elif np.shape(grad) != self.shape:
             raise ValueError('gradient shape mismatch')
         self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
@@ -73,13 +73,21 @@ class Parameter(np.ndarray):
             ctx = y._ctx
             if ctx in visited: return
             visited.add(ctx)
+            
             derivs = [ctx.deriv] if len(ctx.parents) == 1 else ctx.deriv
             assert len(derivs) == len(ctx.parents)
+            
             for x, deriv in zip(ctx.parents, derivs):
-                # ∂L/∂x = ∂L/∂y @ ∂y/∂x
-                x.grad = y.grad @ deriv
+                # ∂e/∂x = ∂y/∂x · ∂e/∂y  (e is the source of backward pass)
+                if ctx.dim == 0:  # TODO: make it work for minibatches
+                    x.grad = deriv * y.grad
+                elif ctx.dim == 1:
+                    x.grad = deriv @ y.grad
+                else:
+                    raise NotImplementedError
                 if isinstance(x, Parameter):
                     dfs(x, visited)
+                    
         self.grad = 1  # the gradient of the source param wrt itself is constant 1
         dfs(self)
         
@@ -92,6 +100,11 @@ class Operation(type):
         The baseclass of Parameter operations.
         An instantiation of it creates a context in the computation graph.
         """
+        dim = 0  # the minimum dimension of the operation
+        # dim = 0: +, *, exp, ReLU, tanh, ...
+        # dim = 1: @, ...
+        # dim = 2: Conv2D, ...
+        
         def __new__(cls, *args, **kwds):
             ctx = object.__new__(cls)
             ctx.parents = args

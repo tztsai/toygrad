@@ -2,31 +2,48 @@ import numpy as np
 from core import Operation
 from my_utils.utils import main, interact
 
-# ************* unary ops *************
+######### unary ops #########
+def ScalarOp(op):
+    op.dim = 0
+    return op
 
+@ScalarOp
 class ReLU(metaclass=Operation):
     def apply(self, x):
         self.deriv = x >= 0
         return np.maximum(x, 0)
 
+@ScalarOp
 class Log(metaclass=Operation):
     def apply(self, x):
         self.deriv = 1 / x
         return np.log(x)
 
+@ScalarOp
 class Exp(metaclass=Operation):
     def apply(self, x):
         y = np.exp(x)
         self.deriv = y
         return y
 
-# ************* reduce ops *************
+######### reduce ops #########
+def ReduceOp(op):
+    apply = op.apply
+    
+    def apply_(self, x):
+        ret = apply(self, x)
+        self.deriv = np.expand_dims(self.deriv, -1)
+        return ret
+    op.apply = apply_
+    return op
 
+@ReduceOp
 class Sum(metaclass=Operation):
     def apply(self, x, axis=None):
-        self.deriv = 1
+        self.deriv = np.ones_like(x)
         return np.array([x.sum()]) if axis is None else x.sum(axis=axis)
 
+@ReduceOp
 class Max(metaclass=Operation):
     def apply(self, x, axis=None):
         axis = [axis] if type(axis) == int else axis
@@ -45,7 +62,7 @@ class Max(metaclass=Operation):
                                for i in range(len(x.shape)) if i not in axis])
         return ret
 
-# ************* binary ops *************
+######### binary ops #########
 Function = object  # TODO: modify the classes inheriting from Function
 
 def unbroadcast(out, in_sh):
@@ -54,17 +71,22 @@ def unbroadcast(out, in_sh):
         [i for i in range(len(in_sh)) if in_sh[i] == 1 and out.shape[i] > 1])
     return out.sum(axis=sum_axis).reshape(in_sh)
 
-class Add(Function):
-    @staticmethod
-    def forward(ctx, x, y):
-        ctx.save_for_backward(x.shape, y.shape)
-        return x+y
+@ScalarOp
+class Add(metaclass=Operation):
+    def apply(self, x, y):
+        self.deriv = np.ones_like(x), np.ones_like(y)
+        return x + y
+    # @staticmethod
+    # def forward(ctx, x, y):
+    #     ctx.save_for_backward(x.shape, y.shape)
+    #     return x+y
 
-    @staticmethod
-    def backward(ctx, deriv_output):
-        shape_x, shape_y = ctx.saved_tensors
-        return unbroadcast(deriv_output, shape_x), unbroadcast(deriv_output, shape_y)
+    # @staticmethod
+    # def backward(ctx, deriv_output):
+    #     shape_x, shape_y = ctx.saved_tensors
+    #     return unbroadcast(deriv_output, shape_x), unbroadcast(deriv_output, shape_y)
 
+@ScalarOp
 class Sub(Function):
     @staticmethod
     def forward(ctx, x, y):
@@ -76,19 +98,23 @@ class Sub(Function):
         shape_x, shape_y = ctx.saved_tensors
         return unbroadcast(deriv_output, shape_x), unbroadcast(-deriv_output, shape_y)
 
+@ScalarOp
 class Mul(metaclass=Operation):
     def apply(self, x, y):
-        self.deriv = (unbroadcast(y*deriv_output, x.shape),
-                     unbroadcast(x*deriv_output, y.shape))
+        # self.deriv = (unbroadcast(y*deriv_output, x.shape),
+        #              unbroadcast(x*deriv_output, y.shape))
+        self.deriv = y, x
         return x * y
 
+@ScalarOp
 class Pow(metaclass=Operation):
     def apply(self, x, y):
-        self.deriv = (unbroadcast(y * (x**(y-1.0)) * deriv_output, x.shape),
-                     unbroadcast((x**y) * np.log(x) * deriv_output, y.shape))
+        # self.deriv = (unbroadcast(y * (x**(y-1.0)) * deriv_output, x.shape),
+        #              unbroadcast((x**y) * np.log(x) * deriv_output, y.shape))
+        self.deriv = y * x**(y-1), x**y * np.log(x)
         return x ** y
 
-# ************* movement ops *************
+######### movement ops #########
 
 class Reshape(Function):
     @staticmethod
@@ -132,7 +158,7 @@ class Slice(Function):
                 for i, p in enumerate(ctx.arg)]
         return inner_slice(deriv_output, narg)
 
-# ************* processing ops *************
+######### processing ops #########
 
 class Matmul(metaclass=Operation):
     def apply(self, x, w):
@@ -198,13 +224,19 @@ class Conv2D(Function):
 
         return gdx.reshape((bs, ctx.groups*cin, OY, OX)), gdw.reshape((ctx.groups*rcout, cin, H, W))
 
-@main
+# @main
 def test():
     from core import Parameter
     a = Parameter([1, 2, 3])
     b = Parameter([4, -2, 1])
-    d = a.exp()
+    c = a + b
+    d = a * c.exp()
     e = d.sum()
     e.backward()
-    x = Parameter(size=[10, 3])
-    w = Parameter(size=[3, 2])
+    from utils import computation_tree
+    tree = computation_tree(e)
+    tree.show()
+    # x = Parameter(size=[10, 3])
+    # w = Parameter(size=[3, 2])
+
+test()

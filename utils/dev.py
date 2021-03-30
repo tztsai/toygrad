@@ -88,138 +88,136 @@ def DefaultNone(cls):
     """
     # keep the original __getattribute__ method
     getattribute = cls.__getattribute__
-
     def get(self, name):
         value = getattribute(self, name)
         if value is None and hasattr(type(self), name):
             return getattr(type(self), name)  # get the class attribute
         return value
-
     cls.__getattribute__ = get
     return cls
 
 
-def makemeta(getter):
-    """A metaclass factory that customizes class instantiation.
+# def makemeta(getter):
+#     """A metaclass factory that customizes class instantiation.
     
-    Args:
-        getter: a function that returns a class to be instantiated
+#     Args:
+#         getter: a function that returns a class to be instantiated
         
-    Returns:
-        a metaclass that when called, returns an instance of the class returned by `getter`
-    """
-    class Meta(type):
-        def __call__(self, *args, **kwds):
-            cln = self.__name__
+#     Returns:
+#         a metaclass that when called, returns an instance of the class returned by `getter`
+#     """
+#     class Meta(type):
+#         def __call__(self, *args, **kwds):
+#             cln = self.__name__
             
-            if type(self.__base__) is Meta:  # a subclass of the created class
-                obj = self.__new__(self)
-                obj.__init__(*args, **kwds)
-                return obj  # initialize as usual
+#             if type(self.__base__) is Meta:  # a subclass of the created class
+#                 obj = self.__new__(self)
+#                 obj.__init__(*args, **kwds)
+#                 return obj  # initialize as usual
             
-            elif len(args) < 1:
-                raise TypeError(f'{cln}() takes at least 1 argument')
+#             elif len(args) < 1:
+#                 raise TypeError(f'{cln}() takes at least 1 argument')
             
-            elif isinstance(obj := args[0], self):
-                if len(args) > 1 or kwds:  # return a new instance
-                    obj = self.__new__(type(args[0]))
-                    obj.__init__(*args[1:], **kwds)
-                return obj
+#             elif isinstance(obj := args[0], self):
+#                 if len(args) > 1 or kwds:  # return a new instance
+#                     obj = self.__new__(type(args[0]))
+#                     obj.__init__(*args[1:], **kwds)
+#                 return obj
             
-            else:
-                try:
-                    ret = getter(*args, **kwds)
-                except TypeError as e:
-                    raise TypeError(f'{cln}() {e}')
+#             else:
+#                 try:
+#                     ret = getter(*args, **kwds)
+#                 except TypeError as e:
+#                     raise TypeError(f'{cln}() {e}')
                 
-                if isinstance(ret, self):
-                    return ret
+#                 if isinstance(ret, self):
+#                     return ret
                 
-                if type(ret) is tuple:
-                    cls, *ini_args = ret
-                else:
-                    cls, ini_args = ret, ()
+#                 if type(ret) is tuple:
+#                     cls, *ini_args = ret
+#                 else:
+#                     cls, ini_args = ret, ()
                     
-                assert issubclass(cls, self)
-                obj = self.__new__(cls)
-                obj.__init__(*ini_args)
-                return obj
-    return Meta
+#                 assert issubclass(cls, self)
+#                 obj = self.__new__(cls)
+#                 obj.__init__(*ini_args)
+#                 return obj
+#     return Meta
 
 
-def swap_methods(*args):
-    """Swap method names of a class.
-    Args: a pair of str or list"""
-    if type(args[0]) is str:
-        swap = {args[0]: args[1]}
-    else:
-        swap = dict(zip(*args))
-    swap.update([[b, a] for a, b in swap.items()])
+# def swap_methods(*args):
+#     """Swap method names of a class.
+#     Args: a pair of str or list"""
+#     if type(args[0]) is str:
+#         swap = {args[0]: args[1]}
+#     else:
+#         swap = dict(zip(*args))
+#     swap.update([[b, a] for a, b in swap.items()])
 
-    def deco(cls):
-        def __getattribute__(self, name):
-            if name in swap:
-                name = swap[name]
-            return getattr(self, name)
-        getattr = cls.__getattribute__
-        cls.__getattribute__ = __getattribute__
-        return cls
+#     def deco(cls):
+#         def __getattribute__(self, name):
+#             if name in swap:
+#                 name = swap[name]
+#             return getattr(self, name)
+#         getattr = cls.__getattribute__
+#         cls.__getattribute__ = __getattribute__
+#         return cls
 
-    return deco
-
-
-def decorator(dec):
-    @wraps(dec)
-    def wrapped(f):
-        return wraps(f)(dec(f))
-    return wrapped
+#     return deco
 
 
-@decorator
-def parse_name(f):
-    def call(*args, **kwds):
-        if len(args) != 1 or kwds or type(args[0]) is not str:
-            raise TypeError(f"only accepts a single str argument")
-        return f(args[0].lower())
-    return call
+# def decorator(dec):
+#     @wraps(dec)
+#     def wrapped(f):
+#         return wraps(f)(dec(f))
+#     return wrapped
 
 
-def squeeze(x):
-    if is_seq(x):
-        if len(x) == 1:
-            return squeeze(x[0])
-        else:
-            return type(x)(squeeze(i) for i in x)
-    else:
-        return x
+# @decorator
+# def parse_name(f):
+#     def call(*args, **kwds):
+#         if len(args) != 1 or kwds or type(args[0]) is not str:
+#             raise TypeError(f"only accepts a single str argument")
+#         return f(args[0].lower())
+#     return call
+
+
+# def squeeze(x):
+#     if is_seq(x):
+#         if len(x) == 1:
+#             return squeeze(x[0])
+#         else:
+#             return type(x)(squeeze(i) for i in x)
+#     else:
+#         return x
     
     
-def is_seq(x):
-    return isinstance(x, (list, tuple))
+# def is_seq(x):
+#     return isinstance(x, (list, tuple))
 
 
-def is_pair(x):
-    return isinstance(x, tuple) and len(x) == 2
+# def is_pair(x):
+#     return isinstance(x, tuple) and len(x) == 2
     
     
-def seq_repr(obj):
-    if is_seq(obj):
-        return ', '.join(map(str, map(repr, obj)))
-    else:
-        return repr(obj)
+# def seq_repr(obj):
+#     if is_seq(obj):
+#         return ', '.join(map(str, map(repr, obj)))
+#     else:
+#         return repr(obj)
 
 
-def slice_grid(h, w, sh, sw, dh=1, dw=1):
-    return [[(slice(i, i+sh), slice(j, j+sw))
-             for j in range(0, w - sw, dh)]
-            for i in range(0, h - sh, dw)]
+# def slice_grid(h, w, sh, sw, dh=1, dw=1):
+#     return [[(slice(i, i+sh), slice(j, j+sw))
+#              for j in range(0, w - sw, dh)]
+#             for i in range(0, h - sh, dw)]
 
 
-def int_or_pair(x):
-    if type(x) == int:
-        y = x
-    else:
-        x, y = x
-        assert type(x) is int and type(y) is int
-    return x, y
+# def int_or_pair(x):
+#     if type(x) == int:
+#         y = x
+#     else:
+#         x, y = x
+#         assert type(x) is int and type(y) is int
+#     return x, y
     
