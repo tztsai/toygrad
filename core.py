@@ -90,6 +90,9 @@ class Parameter(np.ndarray):
                     
         self.grad = 1  # the gradient of the source param wrt itself is constant 1
         dfs(self)
+
+    def __hash__(self):
+        return id(self)
         
 
 class Operation(type):

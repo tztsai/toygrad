@@ -3,7 +3,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 
-from .tree import *
 from .dev import DefaultNone
 
 
@@ -16,18 +15,6 @@ def onehot(x, k, *, cold=0, hot=1):
     for i, j in enumerate(x):
         m[i, j] = hot
     return m
-
-
-def computation_tree(param, type=ascii_tree):
-    "If you just want a list, pass type=list."
-    def dfs(y, visited={None}):
-        try: ctx = y._ctx
-        except: return y
-        if ctx in visited: return y
-        visited.add(ctx)
-        op = ctx.__class__
-        return [y, [op, *[dfs(x, visited) for x in ctx.parents]]]
-    return type(dfs(param))
 
 
 @DefaultNone
