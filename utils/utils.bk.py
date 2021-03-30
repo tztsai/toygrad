@@ -1,14 +1,11 @@
-import os
 import functools
-import inspect
-import sys
 import time
 import numpy as np
 import numpy.random as rand
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import numbers
-from devtools import *
+from utils.dev import *
 
 
 SEED = 1
@@ -235,30 +232,3 @@ def hist_anim():
             anim = CurveAnim(history.keys())
         anim.update(*history.values())
     return callback
-
-
-# **** profiler ****
-DEBUG = os.getenv("DEBUG", None) is not None
-if DEBUG:
-    import atexit
-    import time
-    debug_counts, debug_times = defaultdict(int), defaultdict(float)
-
-    def print_debug_exit():
-        for name, _ in sorted(debug_times.items(), key=lambda x: -x[1]):
-            print(f"{name:>20} : {debug_counts[name]:>6}",
-                  f"{debug_times[name]:>10.2f} ms")
-    atexit.register(print_debug_exit)
-
-class ProfileOp:
-    def __init__(self, name, x, backward=False):
-        self.name, self.x = f"back_{name}" if backward else name, x
-
-    def __enter__(self):
-        if DEBUG: self.st = time.time()
-
-    def __exit__(self, *junk):
-        et = (time.time()-self.st)*1000.
-        debug_counts[self.name] += 1
-        debug_times[self.name] += et
-        print(f"{self.name:>20} : {et:>7.2f} ms {[y.shape for y in self.x]}")

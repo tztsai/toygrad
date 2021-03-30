@@ -1,6 +1,6 @@
 from param import Parameter
 from utils import *
-from devtools import *
+from utils.dev import *
 from my_utils.utils import main
 
 

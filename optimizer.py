@@ -1,4 +1,4 @@
-from devtools import *
+from utils.dev import *
 
 
 @parse_name

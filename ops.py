@@ -6,25 +6,25 @@ from my_utils.utils import main, interact
 
 class ReLU(metaclass=Operation):
     def apply(self, x):
-        self.grad = x >= 0
+        self.deriv = x >= 0
         return np.maximum(x, 0)
 
 class Log(metaclass=Operation):
     def apply(self, x):
-        self.grad = 1 / x
+        self.deriv = 1 / x
         return np.log(x)
 
 class Exp(metaclass=Operation):
     def apply(self, x):
         y = np.exp(x)
-        self.grad = y
+        self.deriv = y
         return y
 
 # ************* reduce ops *************
 
 class Sum(metaclass=Operation):
     def apply(self, x, axis=None):
-        self.grad = 1
+        self.deriv = 1
         return np.array([x.sum()]) if axis is None else x.sum(axis=axis)
 
 class Max(metaclass=Operation):
@@ -38,7 +38,7 @@ class Max(metaclass=Operation):
         ret2 = (input == ret.reshape(shape))
         div = ret2.sum(
             axis=None if axis is None else tuple(axis), keepdims=True)
-        self.grad = ret2 / div  # TODO: check correctness
+        self.deriv = ret2 / div  # TODO: check correctness
 
         if axis is not None:
             ret = ret.reshape([x.shape[i]
@@ -46,6 +46,7 @@ class Max(metaclass=Operation):
         return ret
 
 # ************* binary ops *************
+Function = object  # TODO: modify the classes inheriting from Function
 
 def unbroadcast(out, in_sh):
     # adjoint operation to broadcast is sum. Need to sum all axis with 1 = in_sh[i] < out.shape[i]
@@ -60,9 +61,9 @@ class Add(Function):
         return x+y
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, deriv_output):
         shape_x, shape_y = ctx.saved_tensors
-        return unbroadcast(grad_output, shape_x), unbroadcast(grad_output, shape_y)
+        return unbroadcast(deriv_output, shape_x), unbroadcast(deriv_output, shape_y)
 
 class Sub(Function):
     @staticmethod
@@ -71,32 +72,21 @@ class Sub(Function):
         return x-y
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, deriv_output):
         shape_x, shape_y = ctx.saved_tensors
-        return unbroadcast(grad_output, shape_x), unbroadcast(-grad_output, shape_y)
+        return unbroadcast(deriv_output, shape_x), unbroadcast(-deriv_output, shape_y)
 
-class Mul(Function):
-    @staticmethod
-    def forward(ctx, x, y):
-        ctx.save_for_backward(x, y)
-        return x*y
+class Mul(metaclass=Operation):
+    def apply(self, x, y):
+        self.deriv = (unbroadcast(y*deriv_output, x.shape),
+                     unbroadcast(x*deriv_output, y.shape))
+        return x * y
 
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, y = ctx.saved_tensors
-        return unbroadcast(y*grad_output, x.shape), unbroadcast(x*grad_output, y.shape)
-
-class Pow(Function):
-    @staticmethod
-    def forward(ctx, x, y):
-        ctx.save_for_backward(x, y)
+class Pow(metaclass=Operation):
+    def apply(self, x, y):
+        self.deriv = (unbroadcast(y * (x**(y-1.0)) * deriv_output, x.shape),
+                     unbroadcast((x**y) * np.log(x) * deriv_output, y.shape))
         return x ** y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, y = ctx.saved_tensors
-        return unbroadcast(y * (x**(y-1.0)) * grad_output, x.shape), \
-            unbroadcast((x**y) * np.log(x) * grad_output, y.shape)
 
 # ************* movement ops *************
 
@@ -107,9 +97,9 @@ class Reshape(Function):
         return x.reshape(shape)
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, deriv_output):
         in_shape, = ctx.saved_tensors
-        return grad_output.reshape(in_shape)
+        return deriv_output.reshape(in_shape)
 
 class Transpose(Function):
     @staticmethod
@@ -127,7 +117,7 @@ def inner_slice(x, arg):
     x = np.pad(x, padding)
     slicee = [(p[0] + padding[i][0], p[1] + padding[i][0])
               for i, p in enumerate(arg)]
-    return x[tuple([slice(x[0], x[1], None) for x in slicee])]
+    return x[[slice(x[0], x[1], None) for x in slicee]]
 
 class Slice(Function):
     @staticmethod
@@ -136,19 +126,19 @@ class Slice(Function):
         return inner_slice(x, arg)
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, deriv_output):
         shape, = ctx.saved_tensors
-        narg = [(0-p[0], grad_output.shape[i]+(shape[i]-p[1]))
+        narg = [(0-p[0], deriv_output.shape[i]+(shape[i]-p[1]))
                 for i, p in enumerate(ctx.arg)]
-        return inner_slice(grad_output, narg)
+        return inner_slice(deriv_output, narg)
 
 # ************* processing ops *************
 
-class Matmul(Function):
+class Matmul(metaclass=Operation):
     def apply(self, x, w):
-        dx = grad_output @ np.swapaxes(w, -2, -1)
-        dw = np.swapaxes(input, -2, -1) @ grad_output
-        self.grad = dx, dw
+        dx = deriv_output @ np.swapaxes(w, -2, -1)
+        dw = np.swapaxes(input, -2, -1) @ deriv_output
+        self.deriv = dx, dw
         return x @ w
 
 class Conv2D(Function):
@@ -181,14 +171,14 @@ class Conv2D(Function):
         return np.moveaxis(ret, 4, 2).reshape(bs, cout, oy, ox)
 
     @staticmethod
-    def backward(ctx, grad_output):
-        bs, _, oy, ox = grad_output.shape
+    def backward(ctx, deriv_output):
+        bs, _, oy, ox = deriv_output.shape
         tx, tw, x_shape = ctx.saved_tensors
         _, rcout, cin, H, W = tw.shape
         ys, xs = ctx.stride
         OY, OX = x_shape[2:4]
 
-        ggg = grad_output.reshape(bs, ctx.groups, rcout, oy, ox)
+        ggg = deriv_output.reshape(bs, ctx.groups, rcout, oy, ox)
 
         gdw = np.zeros((ctx.groups, rcout, cin, H, W), dtype=tx.dtype)
         for g in range(ctx.groups):
@@ -211,6 +201,10 @@ class Conv2D(Function):
 @main
 def test():
     from core import Parameter
+    a = Parameter([1, 2, 3])
+    b = Parameter([4, -2, 1])
+    d = a.exp()
+    e = d.sum()
+    e.backward()
     x = Parameter(size=[10, 3])
     w = Parameter(size=[3, 2])
-    relu = ReLU()

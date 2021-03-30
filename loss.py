@@ -1,6 +1,6 @@
 from function import Function
 from utils import np, sign
-from devtools import *
+from utils.dev import *
 
 
 def get_loss(name: str):

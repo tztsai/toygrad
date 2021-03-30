@@ -1,5 +1,6 @@
-import sys
+import os, time, sys
 import logging
+import inspect
 import numpy as np
 from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
@@ -9,6 +10,33 @@ from copy import deepcopy
 from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
 from abc import ABC, abstractmethod
+
+
+# **** profiler ****
+DEBUG = os.getenv("DEBUG", None) is not None
+if DEBUG:
+    import atexit
+    debug_counts, debug_times = defaultdict(int), defaultdict(float)
+
+    def print_debug_exit():
+        for name, _ in sorted(debug_times.items(), key=lambda x: -x[1]):
+            print(f"{name:>20} : {debug_counts[name]:>6}",
+                  f"{debug_times[name]:>10.2f} ms")
+    atexit.register(print_debug_exit)
+
+class ProfileOp:
+    def __init__(self, name, x, backward=False):
+        self.name, self.x = f"back_{name}" if backward else name, x
+
+    def __enter__(self):
+        if DEBUG: self.st = time.time()
+
+    def __exit__(self, *junk):
+        if DEBUG:
+            et = (time.time()-self.st)*1000.
+            debug_counts[self.name] += 1
+            debug_times[self.name] += et
+            print(f"{self.name:>20} : {et:>7.2f} ms {[y.shape for y in self.x]}")
 
 
 # logging config
@@ -30,15 +58,13 @@ class LogFormatter(logging.Formatter):
         
 
 logLevel = logging.DEBUG
-logFormat = LogFormatter()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logLevel)
-
+logFormat = LogFormatter()
 logHandler = logging.StreamHandler()
 logHandler.setLevel(logging.DEBUG)
 logHandler.setFormatter(logFormat)
-
 logger.addHandler(logHandler)
 
 dbg = logger.debug
@@ -141,10 +167,6 @@ def swap_methods(*args):
 
     return deco
 
-    
-# def staticclass(cls):
-#     def __new__(cls, *args, **kwds):
-        
 
 def decorator(dec):
     @wraps(dec)

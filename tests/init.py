@@ -6,4 +6,4 @@ if 'tests' in os.listdir():
 
 import node, model
 from utils import *
-from devtools import *
+from utils.dev import *
