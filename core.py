@@ -65,8 +65,8 @@ class Parameter(np.ndarray):
         self[:] = np.full_like(self, value)
         
     @property
-    def need_update(self):
-        return id(self.grad) != id(0)
+    def grad_zero(self):
+        return id(self.grad) == id(0)
     
     def backward(self):
         def dfs(y, visited={None}):
@@ -78,6 +78,7 @@ class Parameter(np.ndarray):
             assert len(derivs) == len(ctx.parents)
             
             for x, deriv in zip(ctx.parents, derivs):
+                if not isinstance(x, Parameter): continue
                 # ∂e/∂x = ∂y/∂x · ∂e/∂y  (e is the source of backward pass)
                 if ctx.dim == 0:  # TODO: make it work for minibatches
                     x.grad = deriv * y.grad
@@ -123,12 +124,19 @@ class Operation(type):
         def __call__(self, *args, **kwds):
             """Wraps the apply method to process arguments and the return value."""
             learnable = any(isinstance(p, Parameter) and p.learnable for p in args)
+
+            try:  # unify types
+                p0 = next(arg for arg in args if isinstance(arg, Parameter))
+                dtype = p0.dtype
+            except StopIteration:  # no parameters in the arguments
+                return self.apply(*args, **kwds)
             
             # make sure all inputs are not Parameter objects
-            args = [np.asarray(arg) if isinstance(arg, Parameter) else arg for arg in args]
+            args = [np.asarray(arg, dtype=dtype) if isinstance(arg, Parameter)
+                    else arg for arg in args]
             assert not any(isinstance(val, Parameter) for val in kwds.values())
             
-            result = Parameter(self.apply(*args, **kwds), learnable=learnable)
+            result = Parameter(self.apply(*args, **kwds), dtype=dtype, learnable=learnable)
             if learnable: result._ctx = self
             return result
 

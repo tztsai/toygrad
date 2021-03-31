@@ -228,15 +228,15 @@ class Conv2D(Function):
 # @main
 def test():
     from core import Parameter
-    from utils.graph import show_compgraph, NODE_LABELS
-    a = Parameter([1, 2, 3])
-    b = Parameter([4, -2, 1])
-    c = a + b
-    d = a * c.exp()
-    e = d.sum()
-    e.backward()
-    NODE_LABELS.update((v, k) for k, v in locals().items() if len(k) == 1)
-    show_compgraph(e, 'netx')
+    from utils.graph import show_compgraph, LABELS
+    A = Parameter([1, 2, 3])
+    B = Parameter([4, -2, 1])
+    C = A + B
+    D = A * C.exp()
+    E = D.sum() 
+    E.backward()
+    LABELS.update((v, k) for k, v in locals().items() if len(k) == 1)
+    show_compgraph(E, 'plotly')
     # x = Parameter(size=[10, 3])
     # w = Parameter(size=[3, 2])
 

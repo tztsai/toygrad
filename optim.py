@@ -9,47 +9,48 @@ def get_optimizer(name: str):
         raise NotImplementedError
     else:
         raise ValueError(f"unknown optimizer: {name}")
+    
+OptimGetter = makemeta(get_optimizer)
 
 
 @DefaultNone
-class Optimizer(metaclass=makemeta(get_optimizer)):
+class Optimizer(ABC, metaclass=OptimGetter):
     """Base class of an optimizer."""
-    learning_rate = 1e-2
     
     def update(self, parameters):
         """Update weights in the whole neural network."""
         for param in parameters:
-            if param.need_update:
-                param += self.learning_rate * self.grad(param)
+            if not param.grad_zero:
+                param += self.delta(param)
                 param.zero_grad()
 
     @abstractmethod
-    def grad(self, parameter):
+    def delta(self, parameter):
         """The change rate of a parameter given by the optimizer."""
         raise NotImplementedError
-    
-    def __repr__(self):
-        return type(self).__name__ + f'(lr={self.learning_rate:.2e})'
-    
+
 
 class SGD(Optimizer):
+    learning_rate = 1e-3
     momentum = 0.8
     
     def __init__(self, lr=None, momentum=None):
         self.learning_rate = lr
         self.momentum = momentum
+        self.old_delta = {}
         
-    def grad(self, parameter):
-        if not hasattr(parameter, 'prev_grad'):
-            grad = -parameter.grad
+    def delta(self, parameter):
+        if parameter in self.old_delta:
+            delta = (self.momentum * self.old_delta[parameter] - 
+                     (1 - self.momentum) * parameter.grad)
         else:
-            grad = (self.momentum * parameter.prev_grad - 
-                    (1 - self.momentum) * parameter.grad)
-        parameter.prev_grad = grad  # store the gradient for the next update
-        return grad
+            delta = -parameter.grad
+        self.old_delta[parameter] = delta
+        return self.learning_rate * delta
 
     def __repr__(self):
-        return super().__repr__()[:-1] + f', momentum={self.momentum:.2f})'
+        clsname = type(self).__name__
+        return f'{clsname}(lr={self.learning_rate:.2e}), momentum={self.momentum:.2f})'
 
 
 if __name__ == '__main__':
