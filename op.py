@@ -2,9 +2,10 @@ import numpy as np
 from core import Operation
 from my_utils.utils import main, interact
 
-######### unary ops #########
+
 def ScalarOp(op):
     op.dim = 0
+    op.axis = -1
     return op
 
 @ScalarOp
@@ -26,16 +27,15 @@ class Exp(metaclass=Operation):
         self.deriv = y
         return y
 
-######### reduce ops #########
+
 def ReduceOp(op):
     apply = op.apply
     
-    def apply_(self, x):
+    def apply_(self, x, axis=None):
         ret = apply(self, x)
-        self.deriv = np.expand_dims(self.deriv, -1)
+        self.deriv = np.expand_dims(self.deriv, -1) #FIXME
         return ret
     op.apply = apply_
-    op.dim = 1
     return op
 
 @ReduceOp
@@ -63,41 +63,20 @@ class Max(metaclass=Operation):
                                for i in range(len(x.shape)) if i not in axis])
         return ret
 
-######### binary ops #########
-Function = object  # TODO: modify the classes inheriting from Function
 
-def unbroadcast(out, in_sh):
-    # adjoint operation to broadcast is sum. Need to sum all axis with 1 = in_sh[i] < out.shape[i]
-    sum_axis = None if in_sh == (1,) else tuple(
-        [i for i in range(len(in_sh)) if in_sh[i] == 1 and out.shape[i] > 1])
-    return out.sum(axis=sum_axis).reshape(in_sh)
+Function = object  # TODO: modify the classes inheriting from Function
 
 @ScalarOp
 class Add(metaclass=Operation):
     def apply(self, x, y):
         self.deriv = np.ones_like(x), np.ones_like(y)
         return x + y
-    # @staticmethod
-    # def forward(ctx, x, y):
-    #     ctx.save_for_backward(x.shape, y.shape)
-    #     return x+y
-
-    # @staticmethod
-    # def backward(ctx, deriv_output):
-    #     shape_x, shape_y = ctx.saved_tensors
-    #     return unbroadcast(deriv_output, shape_x), unbroadcast(deriv_output, shape_y)
 
 @ScalarOp
 class Sub(Function):
-    @staticmethod
-    def forward(ctx, x, y):
-        ctx.save_for_backward(x.shape, y.shape)
-        return x-y
-
-    @staticmethod
-    def backward(ctx, deriv_output):
-        shape_x, shape_y = ctx.saved_tensors
-        return unbroadcast(deriv_output, shape_x), unbroadcast(-deriv_output, shape_y)
+    def apply(self, x, y):
+        self.deriv = np.ones_like(x), -np.ones_like(y)
+        return x + y
 
 @ScalarOp
 class Mul(metaclass=Operation):
@@ -115,7 +94,6 @@ class Pow(metaclass=Operation):
         self.deriv = y * x**(y-1), x**y * np.log(x)
         return x ** y
 
-######### movement ops #########
 
 class Reshape(Function):
     @staticmethod
@@ -159,14 +137,15 @@ class Slice(Function):
                 for i, p in enumerate(ctx.arg)]
         return inner_slice(deriv_output, narg)
 
-######### processing ops #########
 
-class Matmul(metaclass=Operation):
-    def apply(self, x, w):
-        dx = deriv_output @ np.swapaxes(w, -2, -1)
-        dw = np.swapaxes(input, -2, -1) @ deriv_output
-        self.deriv = dx, dw
-        return x @ w
+class MatMul(metaclass=Operation):
+    in_dim = out_dim = 2
+    identical_dims = 1
+    
+    def apply(self, x, y):
+        # sum(x * y.T) with broadcast
+        self.deriv = y, np.transpose(x)
+        return x @ y
 
 class Conv2D(Function):
     @staticmethod
@@ -232,11 +211,12 @@ def test():
     A = Parameter([1, 2, 3])
     B = Parameter([4, -2, 1])
     C = A + B
-    D = A * C.exp()
-    E = D.sum() 
-    E.backward()
+    D = Parameter([[2,5],[4,1],[7,4]])
+    E = C @ D
+    F = E.sum()
+    F.backward()
     LABELS.update((v, k) for k, v in locals().items() if len(k) == 1)
-    show_compgraph(E, 'plotly')
+    show_compgraph(E)
     # x = Parameter(size=[10, 3])
     # w = Parameter(size=[3, 2])
 
