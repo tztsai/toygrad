@@ -36,10 +36,10 @@ class Parameter(np.ndarray):
                 length = size[0] if hasattr(size, '__len__') else size
                 scale = 1 / np.sqrt(length)  # Xavier initialization
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
-        else:  # convert the value to an array
+        else:
             if size is not None:  # fill an array of the given size
                 value = np.full(size, value, dtype=dtype)
-                
+
         param = np.asarray(value, dtype=dtype).view(cls)
         param.learnable = learnable
         param._ctx = None
@@ -47,8 +47,7 @@ class Parameter(np.ndarray):
         return param
 
     @property
-    def grad(self):
-        return self._grad
+    def grad(self): return self._grad
 
     @grad.setter
     def grad(self, grad):
@@ -58,16 +57,13 @@ class Parameter(np.ndarray):
         elif np.shape(grad) != self.shape:
             raise ValueError('gradient shape mismatch')
         self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
-
-    def zero_grad(self):
-        self._grad = 0
-        
-    def fill(self, value):
-        self[:] = np.full_like(self, value)
         
     @property
-    def grad_zero(self):
-        return id(self.grad) == id(0)
+    def grad_zero(self): return id(self.grad) == id(0)
+
+    def zero_grad(self): self._grad = 0
+        
+    def fill(self, value): self[:] = np.full_like(self, value)
 
     def backward(self):
         def dfs(param, visited={None}):
@@ -84,8 +80,7 @@ class Parameter(np.ndarray):
         self.grad = 1  # the gradient of the source param wrt itself is constant 1
         dfs(self)
 
-    def __hash__(self):
-        return id(self)
+    def __hash__(self): return id(self)
         
 
 class Operation(type):
@@ -96,15 +91,13 @@ class Operation(type):
         The baseclass of Parameter operations.
         An instantiation of it creates a context in the computation graph.
         """
-        in_dim, out_dim = 0, 0
-        broadcastable = False
-        # dimensionalities of input and output on which the operation is applied
+        ndim_in, ndim_out = 0, 0  # num of dims of input and output on which op is applied
+        omitted_axes = ()  # the input axes omitted in deriv, some may be bound to output axes
         
         def __new__(cls, *args, **kwds):
             ctx = object.__new__(cls)
             ctx.parents = args
             ctx.deriv = None
-            ctx.bound_axes = ()  # XXX: Make this Clear!
             with ProfileOp(cls.__name__, args):
                 return ctx(*args, **kwds)
 
@@ -113,53 +106,47 @@ class Operation(type):
             """Computes the output and stores its derivative matrix in `self.deriv`."""
             raise NotImplementedError
         
-        def _passgrad(self, y, x, in_dim, deriv):
-            """6 steps to compute the gradient of the input x:
-            1. expand: insert new axes into the gradient of the output y
-            2. swap: swap the "constrained" axes of y with the correspinding new axes
-            3. squeeze: remove the swapped new axes
-            4. multiply: multiply the gradient of y with the partial derivatives of op
-            5. sum: sum up and eliminate the tail axes that corresponds to the axes of y
-            6. debroadcast: sum up (but not remove) the broadcasted axes of the gradient of x
+        def _passgrad(self, y, ix):
+            """Computes the gradient of the parent no.`ix` given the child `y`.
+                1. expand grad: insert new axes into the gradient of the output y
+                2. swap: swap the "constrained" axes of y with the correspinding new axes
+                3. squeeze: remove the swapped new axes
+                4. multiply: multiply the gradient of y with the partial derivatives of op
+                5. sum: sum up and eliminate the tail axes that corresponds to the axes of y
+                6. expand deriv: insert omitted exes into the deriv array dy/dx
+                7. debroadcast: sum up (but not remove) the broadcasted axes of the gradient of x
             """
             def splitshape(sh, k): return sh[:k], sh[k:]
             def axes(a, b): return tuple(range(a, b))
+            def getattrs(*ss): return \
+                [(a:=getattr(self, s), a if len(self.parents) == 1 else a[ix])[1] for s in ss]
+            x = self.parents[ix]
+            xdim,dydx,bnd_axes,omt_axes = getattrs('ndim_in','deriv','bound_axes','omitted_axes')
+            ydim = self.ndim_out            
+            xsh_ext, xsh = splitshape(x.shape, -xdim)
+            ysh_ext, ysh = splitshape(y.shape, -ydim)
             
-            x_sh_ext, x_sh = splitshape(x.shape, -in_dim)
-            y_sh_ext, y_sh = splitshape(y.shape, -out_dim)
-            
-            sum_axes = []
-            if self.broadcastable:  # find the broadcasted axes
-                assert len(x_sh_ext) == len(y_sh_ext)
-                for i, (j, k) in enumerate(zip(x_sh_ext, y_sh_ext)):
-                    if j == 1 and k > 1: sum_axes.append(j)
-                    else: assert j == k
-            else:
-                assert x_sh_ext == y_sh_ext
+            bc_axes = []  # broadcasted axes of x
+            for i in range(len(xsh_ext)):
+                j, k = x.shape[-xdim-i], y.shape[-ydim-i]
+                if j == 1 and k > 1: bc_axes.append(-xdim-i)
+                else: assert j == k
 
-            # d_sh_ext, d_sh = splitshape(deriv.shape, len(x_sh_ext))
-            # assert d_sh_ext == x_sh_ext
+            ofs1, ofs2 = -xdim-ydim, -ydim
+            dy = np.expand_dims(y.grad, axes(ofs1, ofs2))
+            dydx_axes_to_expand = list(omt_axes)
+            for a1, a2 in enumerate(omt_axes):
+                if type(a2) is int:  # bound to output axis a2
+                    dy = np.swapaxes(dy, a1+ofs1, a2+ofs2)
+                elif not a2:  # axis not omitted
+                    dydx_axes_to_expand.remove(a1)
+            dydx = np.expand_dims(dydx, axis=tuple(dydx_axes_to_expand))
 
-            ofs1, ofs2 = -in_dim-out_dim, -out_dim
-            y_grad_ex = np.expand_dims(y.grad, axes(ofs1, ofs2))
-            swapped_axes = []
-            for a2, a1 in enumerate(self.bound_axes):
-                if a1 >= 0:  # output axis a2 is bound to input axis a1
-                    swapped_axes.append(a2+ofs2)
-                    y_grad_ex = np.swapaxes(y_grad_ex, a1+ofs1, a2+ofs2)
-            y_grad_ex = np.squeeze(y_grad_ex, axis=tuple(swapped_axes))
-            grad = np.sum(y_grad_ex * deriv, axis=axes(len(swapped_axes)+ofs2, 0))
-            # ed1, ed2 = self.bound_dim-len(d_sh), self.bound_dim-out_dim
-            # assert d_sh[:ed2] == x_sh and d_sh[ed2:] == y_sh[ed2:]
-            # y_grad_ex = np.expand_dims(y.grad, axes(ed1, ed2))
-            # grad = np.sum(y_grad_ex * deriv, axis=axes(ed2, 0))
-            
-            # if ndd == ndx + ndy:
-            #     assert d_sh == x_sh + y_sh
-            #     y_grad = np.expand_dims(y.grad, tuple(range(-ndd, -ndy)))
-            #     grad = np.sum(y_grad * deriv, axis=tuple(range(-ndy, 0)))
-
-            grad = np.sum(grad, axis=sum_axes, keepdims=True)  # debroadcast
+            # basically, ∂e/∂x = Σ_y (∂e/∂y * ∂y/∂x)
+            grad = np.sum(dy * dydx, axis=axes(ofs2, 0))
+            # debroadcast - sum over the broadcasted axes
+            grad = np.sum(grad, axis=tuple(bc_axes), keepdims=True)
+            grad = np.squeeze(grad, axis=axes(-grad.ndim, -x.ndim))
             assert grad.shape == x.shape
             return grad
         
@@ -167,12 +154,8 @@ class Operation(type):
             """Given the child node, computes the gradients of the parents.
                Override this to define your own backprop method.
                You may want to save something for the backprop when you apply the operation -
-               just add any attribute to `self` (its name better bigins with '_').""" 
-            if len(self.parents) == 1:
-                in_dims = [self.in_dim]
-                derivs = [self.deriv]
-            for par, ind, deriv in zip(self.parents, in_dims, derivs):
-                yield self._passgrad(par, child, ind, deriv)
+               just add any attribute to `self` (its name better bigins with '_')."""
+            for i in range(len(self.parents)): yield self._passgrad(child, i)
 
         def __call__(self, *args, **kwds):
             """Wraps the apply method to process arguments and the return value."""
@@ -195,19 +178,12 @@ class Operation(type):
             return output
 
         def __repr__(self):
-            if self.deriv is None:
-                return f"{type(self).__name__}({', '.join(map(repr, self.parents))})"
-            else:
-                return f"{type(self).__name__}'({', '.join(map(repr, self.parents))})={self.deriv}"
+            return f"{type(self).__name__}({', '.join(map(repr, self.parents))})"
     
     def __new__(meta, name, bases, dict):
         op = type.__new__(meta, name, (meta.AbstractOp,), dict)
-        assert len(op.bound_axes) == op.out_dim and \
-            all(a == -1 or a in range(op.in_dim) for a in op.bound_axes)
-        
-        # convert the operation to a function (otherwise it cannot be an instance method)
+        # convert the class to a function (otherwise it cannot be a method)
         def f(*args, **kwds): return op(*args, **kwds)
-        
         # register the operation in the Parameter class
         name = name.lower()
         setattr(Parameter, name, f)
@@ -215,7 +191,6 @@ class Operation(type):
             setattr(Parameter, f"__{name}__", f)
             setattr(Parameter, f"__r{name}__", lambda self, x: f(x, self))
             setattr(Parameter, f"__i{name}__", lambda self, x: self.fill(f(self, x)))
-            op.broadcastable = True
         return op
     
     def __repr__(self):

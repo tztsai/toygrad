@@ -4,8 +4,8 @@ from my_utils.utils import main, interact
 
 
 def ScalarOp(op):
-    op.dim = 0
-    op.axis = -1
+    ndim_in, ndim_out = 0, 0
+    bound_axes, omitted_axes = (), ()
     return op
 
 @ScalarOp
@@ -30,19 +30,22 @@ class Exp(metaclass=Operation):
 
 def ReduceOp(op):
     apply = op.apply
-    
     def apply_(self, x, axis=None):
-        ret = apply(self, x)
-        self.deriv = np.expand_dims(self.deriv, -1) #FIXME
-        return ret
+        if axis is not None:
+            if not np.shape(axis): axis = [axis]
+            self.bound_axes = tuple(-1 if a not in axis else a
+                                    for a in range(x.ndim))
+        y = apply(self, x, axis=axis)
+        self.ndim_in, self.ndim_out = x.ndim, y.ndim
+        return y
     op.apply = apply_
     return op
 
 @ReduceOp
 class Sum(metaclass=Operation):
     def apply(self, x, axis=None):
-        self.deriv = np.ones_like(x)
-        return np.array([x.sum()]) if axis is None else x.sum(axis=axis)
+        self.deriv = np.ones_like(x)  #FIXME: this only applies to axis=None
+        return np.sum(x, axis=axis)
 
 @ReduceOp
 class Max(metaclass=Operation):
@@ -139,13 +142,21 @@ class Slice(Function):
 
 
 class MatMul(metaclass=Operation):
-    in_dim = out_dim = 2
-    identical_dims = 1
+    ndim_in, ndim_out = (2, 2), 2
+    bound_axes = (0, -1), (-1, 1)
+    omitted_axes = (0,), (1,)
     
     def apply(self, x, y):
-        # sum(x * y.T) with broadcast
-        self.deriv = y, np.transpose(x)
+        x, y = np.asarray(x), np.asarray(y)
+        self._x_sh, self._y_sh = x.shape, y.shape
+        while x.ndim < 2: x = np.expand_dims(x, 0)
+        while y.ndim < 2: y = np.expand_dims(y, -1)
+        self.deriv = y, np.swapaxes(x, -1, -2)
         return x @ y
+    
+    def backward(self, child):
+        grad_x, grad_y = super().backward(child)
+        return grad_x.reshape(self._x_sh), grad_y.reshape(self._y_sh)
 
 class Conv2D(Function):
     @staticmethod
@@ -208,13 +219,15 @@ class Conv2D(Function):
 def test():
     from core import Parameter
     from utils.graph import show_compgraph, LABELS
-    A = Parameter([1, 2, 3])
-    B = Parameter([4, -2, 1])
-    C = A + B
+    # A = Parameter([1, 2, 3])
+    # B = Parameter([4, -2, 1])
+    # C = A + B
+    C = Parameter([[[2,5,3],[6,-1,12]]] * 100)
     D = Parameter([[2,5],[4,1],[7,4]])
     E = C @ D
     F = E.sum()
     F.backward()
+    print(C.grad); print(D.grad)
     LABELS.update((v, k) for k, v in locals().items() if len(k) == 1)
     show_compgraph(E)
     # x = Parameter(size=[10, 3])

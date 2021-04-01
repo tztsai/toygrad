@@ -6,10 +6,6 @@ from collections import defaultdict
 from .dev import DefaultNone
 
 
-def dim(x):
-    return len(np.shape(x))
-
-
 def onehot(x, k, *, cold=0, hot=1):
     m = np.full((len(x), k), cold, dtype=np.int)
     for i, j in enumerate(x):
