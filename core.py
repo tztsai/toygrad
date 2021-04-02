@@ -141,9 +141,9 @@ class Operation(ABC, metaclass=OperationMeta):
         5. sum: sum up the product along axes corresponding to the output to obtain ∇x
         """
         for i, x in enumerate(self.inputs):
-            xdim, ydim = self.inputattr('ndim_in')[i], self.ndim_out
-            dy_dx = self.inputattr('deriv')[i]
-            bd_axs, om_axs = [self.inputattr(a)[i] for a in ['bound_axes', 'omitted_axes']]
+            xdim, ydim = self.inputattr(ndim_in=i), self.ndim_out
+            dy_dx = self.inputattr(deriv=i)
+            bd_axs, om_axs = self.inputattr(bound_axes=i), self.inputattr(omitted_axes=i)
             off1, off2 = -xdim-ydim, -ydim  # offsets corresponding to input and output axes
             y_grad = np.expand_dims(output.grad, tuple(range(off1, off2)))
             for a in bd_axs: y_grad = np.swapaxes(y_grad, a+off1, a+off2)
@@ -156,7 +156,7 @@ class Operation(ABC, metaclass=OperationMeta):
         """Call the backward method and process the shape of the grads."""
         def backsplit(sh, k): return (sh[:-k], sh[-k:]) if k else (sh, ())
         for i, (x, grad) in enumerate(zip(self.inputs, self.backward(output))):
-            xdim = self.inputattr('ndim_in')[i]
+            xdim = self.inputattr(ndim_in=i)
             xsh_ext, xsh = backsplit(x.shape, xdim)
             gsh_ext, gsh = backsplit(grad.shape, xdim)
             assert gsh == xsh, 'gradient shape mismatch'
@@ -170,9 +170,10 @@ class Operation(ABC, metaclass=OperationMeta):
             # debroadcast - sum over the broadcasted axes
             if bc_axes: grad = np.sum(grad, axis=tuple(bc_axes))
             yield grad.reshape(x.shape)
-            
-    def inputattr(self, name):
-        return [getattr(self, name)] if len(self.inputs) == 1 else getattr(self, name)
+
+    def inputattr(self, **kwds):
+        (a, i), = kwds.items(); val = getattr(self, a)
+        return val if len(self.inputs) == 1 else val[i]
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
