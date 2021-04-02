@@ -2,107 +2,90 @@ import numpy as np
 from core import Operation
 
 
-def UnaryOp(op):
-    op.ndim_in, op.ndim_out = 0, 0
-    op.omitted_axes = op.bound_axes = ()
-    return op
+class UnaryOp(Operation):
+    ndim_in = ndim_out = 0
+    omitted_axes = bound_axes = ()
 
-@UnaryOp
-class ReLU(Operation):
+class ReLU(UnaryOp):
     def apply(self, x):
         self.deriv = x >= 0
         return np.maximum(x, 0)
 
-@UnaryOp
-class Log(Operation):
+class Log(UnaryOp):
     def apply(self, x):
         self.deriv = 1 / x
         return np.log(x)
 
-@UnaryOp
-class Exp(Operation):
+class Exp(UnaryOp):
     def apply(self, x):
         y = np.exp(x)
         self.deriv = y
         return y
     
-@UnaryOp
-class Tanh(Operation):
+class Tanh(UnaryOp):
     def apply(self, x):
         y = np.tanh(x)
         self.deriv = 1 - y**2
         return y
 
 
-def BinaryOp(op):
-    op.ndim_in, op.ndim_out = (0, 0), 0
-    op.omitted_axes = op.bound_axes = ((), ())
-    return op
+class BinaryOp(Operation):
+    ndim_in, ndim_out = (0, 0), 0
+    omitted_axes = bound_axes = ((), ())
 
-@BinaryOp
-class Add(Operation):
+class Add(BinaryOp):
     def apply(self, x, y):
         self.deriv = np.ones_like(x), np.ones_like(y)
         return x + y
 
-@BinaryOp
-class Sub(Operation):
+class Sub(BinaryOp):
     def apply(self, x, y):
         self.deriv = np.ones_like(x), -np.ones_like(y)
         return x + y
 
-@BinaryOp
-class Mul(Operation):
+class Mul(BinaryOp):
     def apply(self, x, y):
         self.deriv = y, x
         return x * y
     
-@BinaryOp
-class TrueDiv(Operation):
+class TrueDiv(BinaryOp):
     def apply(self, x, y):
         self.deriv = 1/y, -x/y**2
         return x / y
 
-@BinaryOp
-class Pow(Operation):
+class Pow(BinaryOp):
     def apply(self, x, y):
         self.deriv = y * x**(y-1), x**y * np.log(x)
         return x ** y
     
 
-def AxesOp(op):
-    apply = op.apply
-    def apply_(self, x, axis=None):
-        y = apply(self, x, axis=axis)
-        self.ndim_in, self.ndim_out = x.ndim, y.ndim
-        return y
-    op.apply = apply_
-    return op
+class AxesOp(Operation):
+    ndim_in = ndim_out = -1
+    
+    def passgrads(self, output):  # skip debroadcasting
+        yield from self.backward(output.grad)
 
-@AxesOp
-class Reshape(Operation):
+class Reshape(AxesOp):
     def apply(self, x, shape):
         return x.reshape(shape)
 
-    def backward(self, y):
-        yield y.grad.reshape(self.pars.shape)
+    def backward(self, grad_y):
+        yield grad_y.reshape(self.pars.x.shape)
 
-@AxesOp
-class Transpose(Operation):
+class Transpose(AxesOp):
     def forward(self, x, order):
         return np.transpose(x, order)
 
-    def backward(self, y):
-        yield np.transpose(y, np.argsort(self.pars.order))
+    def backward(self, grad_y):
+        yield np.transpose(grad_y, np.argsort(self.pars.order))
 
-@AxesOp
-class Slice(Function):
+class Slice(AxesOp):
     def apply(self, x, arg=None):
-        self._shape = x.shape
+        self._xsh = x.shape
         return self.slice(x, arg)
 
     def backward(self, grad_y):
-        return self.slice(grad_y, [(-p[0], grad_y.shape[i] + (self._shape[i]-p[1]))
+        return self.slice(grad_y, [(-p[0], grad_y.shape[i] + (self._xsh[i]-p[1]))
                                    for i, p in enumerate(self.pars.arg)])
         
     @staticmethod
@@ -115,8 +98,7 @@ class Slice(Function):
         return x[[slice(x[0], x[1]) for x in slicee]]
 
 
-@AxesOp
-class Sum(Operation):
+class Sum(AxesOp):
     def apply(self, x, axis=None):
         return np.sum(x, axis=axis)
     
@@ -127,8 +109,7 @@ class Sum(Operation):
                  for i in range(len(x.shape))]
         yield grad_y.reshape(shape) + np.zeros_like(x)
 
-@AxesOp
-class Max(Operation):
+class Max(AxesOp):
     def apply(self, x, axis=None):
         axis = [axis] if type(axis) == int else axis
         ret = np.amax(x, axis = axis and tuple(axis), keepdims=True)
@@ -152,7 +133,7 @@ class SoftMax(Operation):
 
     def apply(self, x):
         ex = np.exp(x)
-        y = ex / np.sum(ex, axis=-1)
+        y = ex / np.sum(ex, axis=-1, keepdims=True)
         I = np.eye(y.shape[-1])
         y_row, y_col = np.expand_dims(y, -2), np.expand_dims(y, -1)
         self.deriv = y_col * (I - y_row)
@@ -198,7 +179,7 @@ class MatMul(Operation):
 
 
 class Conv2D(Operation):
-    ndim_in, ndim_out = 4, 4  #TODO: simplify this to 2D
+    ndim_in, ndim_out = (4, 4), 4  #TODO: simplify this to 2D
 
     def apply(self, x, w, stride=1, groups=1):
         if type(stride) == int:
@@ -262,14 +243,29 @@ class Conv2D(Operation):
 def test():
     from core import Parameter
     from utils.graph import show_compgraph, label
-    A = Parameter(size=[100, 20, 1, 30])
-    B = Parameter(size=[100, 1, 50, 30])
-    C = (A * B).relu() / B.sum()
-    D = Parameter(size=[30, 40])
-    E = C @ D
-    F = E.exp().sum()
-    F.backward()
-    [label(p, s) for s, p in locals().items() if isinstance(p, Parameter)]
-    return show_compgraph(F, 'dot')
+    # A = Parameter(size=[100, 20, 1, 30])
+    # B = Parameter(size=[100, 1, 50, 30])
+    # C = (A * B).relu() / B.sum()
+    # D = Parameter(size=[30, 40])
+    # E = C @ D
+    # F = E.exp().sum()
+    # F.backward()
+    # [label(p, s) for s, p in locals().items() if isinstance(p, Parameter)]
+    # return show_compgraph(F, 'dot')
+
+    X = Parameter(size=[200, 3, 100, 100])
+    Y = Parameter(size=[200, 10]).softmax()
+
+    K1 = Parameter(size=[32, 3, 5, 5])
+    H1 = X.conv2d(K1, stride=2)
+    K2 = Parameter(size=[64, 32, 5, 5])
+    H2 = H1.conv2d(K2, stride=2)
+
+    H = H2.reshape(shape=[200, -1])
+    W = Parameter(size=[H.shape[-1], 10])
+    L = SoftMaxCrossEntropy(H @ W, Y).sum()
+
+    L.backward()
+    return show_compgraph(L)
 
 test()

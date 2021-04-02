@@ -160,6 +160,7 @@ class Operation(ABC, metaclass=OperationMeta):
         grads = self.backward(output.grad)
         for i, (x, grad) in enumerate(zip(self.inputs, grads)):
             xdim = self.inputattr(ndim_in=i)
+            if xdim < 0: xdim = x.ndim
             xsh_ext, xsh = backsplit(x.shape, xdim)
             gsh_ext, gsh = backsplit(grad.shape, xdim)
             assert gsh == xsh, 'gradient shape mismatch'
@@ -176,6 +177,7 @@ class Operation(ABC, metaclass=OperationMeta):
 
     def inputattr(self, **kwds):
         (a, i), = kwds.items(); val = getattr(self, a)
+        if a in ['bound_axes', 'omitted_axes'] and not val: return ()
         return val if len(self.inputs) == 1 else val[i]
 
     def __call__(self, *args, **kwds):
@@ -196,7 +198,7 @@ class Operation(ABC, metaclass=OperationMeta):
         self.pars = NameSpace()  # save all inputs in self.pars
         params = inspect.signature(self.apply).parameters
         for i, p in enumerate(params.values()):
-            val = args[i] if p.default is p.empty else p.default
+            val = args[i] if i < len(args) else p.default
             self.pars[p.name] = val
         self.pars.update(kwds)
         
@@ -206,4 +208,5 @@ class Operation(ABC, metaclass=OperationMeta):
         return output
 
     def __repr__(self):
-        return f"{type(self).__name__}({', '.join(map(repr, self.inputs))})"
+        def rep(x): return '%s%s' % (type(x), np.shape(x)) if np.size(x) > 4 else repr(x)
+        return f"{type(self).__name__}({', '.join(map(rep, self.inputs))})"

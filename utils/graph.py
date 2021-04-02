@@ -18,8 +18,8 @@ def label(node, lb=None):
                 a = random.choice(LETTERS)
                 while a in LABELS:
                     a += random.choice(LETTERS)
+            LABELS.add(a)
             lb = '%s%s' % (a, list(np.shape(node)))
-            LABELS.add(lb)
         else:
             try:
                 lb = '%.2e' % float(node)
