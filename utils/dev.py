@@ -103,6 +103,9 @@ class NameSpace(dict):
         else:
             return super().__getattribute__(name)
 
+    def __setattr__(self, name, value):
+        self[name] = value
+
 
 def makemeta(getter):
     """A metaclass factory that customizes class instantiation.

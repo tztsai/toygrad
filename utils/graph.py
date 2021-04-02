@@ -5,6 +5,30 @@ import numpy as np
 import random
 
 
+LETTERS = tuple(map(chr, range(97, 123)))  # lowercase alphabet
+NODES, LABELS = {}, set()  # {id: (node, label)}, {label}
+
+def label(node, lb=None):
+    nid = id(node)
+    if nid not in NODES:
+        if np.shape(node):
+            if lb and nid not in LABELS:
+                a = lb
+            else:
+                a = random.choice(LETTERS)
+                while a in LABELS:
+                    a += random.choice(LETTERS)
+            lb = '%s%s' % (a, list(np.shape(node)))
+            LABELS.add(lb)
+        else:
+            try:
+                lb = '%.2e' % float(node)
+            except:
+                lb = str(type(node)) if hasattr(node, 'apply') else str(node)
+        NODES[nid] = (node, lb)
+    else: lb = NODES[nid][1]
+    return lb
+
 # def show_ete(lst):
 #     from ete3 import Tree
 #     def newick(lst):
@@ -15,7 +39,6 @@ import random
 #         else:
 #             return name
 #     Tree(newick(lst) + ';').show()
-
 
 # def show_ascii(lst):
 #     from treelib import Node, Tree
@@ -45,32 +68,6 @@ def to_netx(lst):
     pos = nx.fruchterman_reingold_layout(g, k=2/np.sqrt(n))
     return g, pos
 
-
-LETTERS = tuple(map(chr, range(97, 123)))
-NODES, LABELS = {}, set()  # {id: (node, label)}, {label}
-
-def label(node, lb=None):
-    nid = id(node)
-    if nid not in NODES:
-        if np.shape(node):
-            if lb and nid not in LABELS:
-                a = lb
-            else:
-                a = random.choice(LETTERS)
-                while a in LABELS:
-                    a += random.choice(LETTERS)
-            lb = '%s%s' % (a, list(np.shape(node)))
-            LABELS.add(lb)
-        else:
-            try:
-                lb = '%.2e' % float(node)
-            except:
-                lb = str(type(node)) if hasattr(node, 'apply') else str(node)
-        NODES[nid] = (node, lb)
-    else: lb = NODES[nid][1]
-    return lb
-
-
 def show_plt(lst):
     g, pos = to_netx(lst)
     fig = plt.figure(figsize=[10, 7.5])
@@ -78,7 +75,8 @@ def show_plt(lst):
     nx.draw(g, labels=labels, **graph_cfg)
     plt.gca().margins(0.20)
     plt.show()
-    
+    return fig 
+
 graph_cfg = {
     "font_size": 8,
     "node_size": 2000,
@@ -113,7 +111,6 @@ def show_plotly(lst):
     #     x=edge_x, y=edge_y,
     #     line=plotly_cfg.linestyle,
     #     mode='lines')
-
     node_trace = pg.Scatter(
         x=node_x, y=node_y,
         mode='markers+text',
@@ -155,10 +152,7 @@ def show_plotly(lst):
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
         annotations=arrows)
     )
-
-    fig.show()
-    # globals().update(locals())
-    
+    fig.show(); return fig
 
 class plotly_cfg:
     colors = ['#ca4', '#28d']
@@ -182,10 +176,10 @@ def show_dot(lst):
             add_edges(child)
     g = gv.Digraph('A toych computation graph')
     add_edges(lst)
-    g.render()
+    # g.render(format='png')
     return g
 
-    
+
 def compgraph(param):
     def dfs(y, visited={None}):
         try: ctx = y._ctx
@@ -195,7 +189,7 @@ def compgraph(param):
         return [y, [ctx, *[dfs(x, visited) for x in ctx.inputs]]]
     return dfs(param)
 
-
-def show_compgraph(param, type='plt'):
+def show_compgraph(param, type='dot'):
+    """available types: ['plt', 'plotly', 'dot']."""
     show = eval('show_' + type)
     return show(compgraph(param))

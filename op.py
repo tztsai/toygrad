@@ -34,9 +34,6 @@ class Tanh(Operation):
         return y
 
 
-Function = object  # TODO: modify the classes inheriting from Function
-
-
 def BinaryOp(op):
     op.ndim_in, op.ndim_out = (0, 0), 0
     op.omitted_axes = op.bound_axes = ((), ())
@@ -76,9 +73,6 @@ class Pow(Operation):
 def AxesOp(op):
     apply = op.apply
     def apply_(self, x, axis=None):
-        # if axis is None: axis = tuple(range(x.ndim))
-        # if type(axis) is int: axis = [axis]
-        # self.bound_axes = [a for a in range(x.ndim) if a in axis]
         y = apply(self, x, axis=axis)
         self.ndim_in, self.ndim_out = x.ndim, y.ndim
         return y
@@ -101,57 +95,55 @@ class Transpose(Operation):
     def backward(self, y):
         yield np.transpose(y, np.argsort(self.pars.order))
 
-def inner_slice(x, arg):
-    padding = [(max(0, -p[0]), max(0, p[1]-x.shape[i]))
-               for i, p in enumerate(arg)]
-    x = np.pad(x, padding)
-    slicee = [(p[0] + padding[i][0], p[1] + padding[i][0])
-              for i, p in enumerate(arg)]
-    return x[[slice(x[0], x[1], None) for x in slicee]]
-
 @AxesOp
 class Slice(Function):
     def apply(self, x, arg=None):
         self._shape = x.shape
-        return inner_slice(x, arg)
+        return self.slice(x, arg)
 
-    def backward(self, output):
-        return inner_slice(
-            output.grad, 
-            [(-p[0], output.grad.shape[i] + (self._shape[i]-p[1]))
-             for i, p in enumerate(self.pars.arg)])
-    
+    def backward(self, grad_y):
+        return self.slice(grad_y, [(-p[0], grad_y.shape[i] + (self._shape[i]-p[1]))
+                                   for i, p in enumerate(self.pars.arg)])
+        
+    @staticmethod
+    def slice(x, arg):
+        padding = [(max(0, -p[0]), max(0, p[1]-x.shape[i]))
+                   for i, p in enumerate(arg)]
+        x = np.pad(x, padding)
+        slicee = [(p[0] + padding[i][0], p[1] + padding[i][0])
+                  for i, p in enumerate(arg)]
+        return x[[slice(x[0], x[1]) for x in slicee]]
+
+
 @AxesOp
 class Sum(Operation):
     def apply(self, x, axis=None):
         return np.sum(x, axis=axis)
     
-    def backward(self, output):
+    def backward(self, grad_y):
         x = self.pars.x
         axis = [axis] if type(axis := self.pars.axis) is int else axis
         shape = [1 if axis is None or i in axis else x.shape[i]
                  for i in range(len(x.shape))]
-        yield output.grad.reshape(shape) + np.zeros_like(x)
-        
-# @AxesOp
-class Max(Function):
+        yield grad_y.reshape(shape) + np.zeros_like(x)
+
+@AxesOp
+class Max(Operation):
     def apply(self, x, axis=None):
         axis = [axis] if type(axis) == int else axis
-        ret = np.amax(x, axis=None if axis is None else tuple(
-            axis), keepdims=True)
-
-        shape = [1 if axis is None or i in axis else input.shape[i]
-                 for i in range(len(input.shape))]
-        ret2 = (input == ret.reshape(shape))
-        div = ret2.sum(
-            axis=None if axis is None else tuple(axis), keepdims=True)
-        self.deriv = ret2 / div  # TODO: check correctness
-
+        ret = np.amax(x, axis = axis and tuple(axis), keepdims=True)
         if axis is not None:
-            ret = ret.reshape([x.shape[i]
-                               for i in range(len(x.shape)) if i not in axis])
+            ret = ret.reshape([s for i, s in enumerate(x.shape) if i not in axis])
+        # store information for backward
+        shape = [int(axis is None or i in axis) or s for i, s in enumerate(x.shape)]
+        ret2 = (x == ret.reshape(shape))
+        div = ret2.sum(axis = axis and tuple(axis), keepdims=True)
+        self._s, self._d = shape, ret2 / div
         return ret
     
+    def backward(self, grad_y):
+        return self._d * grad_y.reshape(self._s)
+
     
 ##### 1D operations #####
 
@@ -200,66 +192,70 @@ class MatMul(Operation):
         self.deriv = y, np.swapaxes(x, -1, -2)
         return x @ y
     
-    def passgrads(self, output):
-        grad_x, grad_y = super().passgrads(output)
+    def passgrads(self, grad_z):
+        grad_x, grad_y = super().passgrads(grad_z)
         return grad_x.reshape(self._xsh), grad_y.reshape(self._ysh)
 
-class Conv2D(Function):
-    @staticmethod
-    def forward(ctx, x, w, stride=1, groups=1):
-        if type(ctx.stride) == int:
-            ctx.stride = (ctx.stride, ctx.stride)
+
+class Conv2D(Operation):
+    ndim_in, ndim_out = 4, 4  #TODO: simplify this to 2D
+
+    def apply(self, x, w, stride=1, groups=1):
+        if type(stride) == int:
+            stride = (stride, stride)
         cout, cin, H, W = w.shape
-        ys, xs = ctx.stride
+        ys, xs = stride
         bs, cin_ = x.shape[0], x.shape[1]
         oy, ox = (x.shape[2]-(H-ys))//ys, (x.shape[3]-(W-xs))//xs
-        assert cin*ctx.groups == cin_
-        assert cout % ctx.groups == 0
-        rcout = cout//ctx.groups
+        assert cin*groups == cin_
+        assert cout % groups == 0
+        rcout = cout//groups
 
-        gx = x.reshape(bs, ctx.groups, cin, x.shape[2], x.shape[3])
+        gx = x.reshape(bs, groups, cin, x.shape[2], x.shape[3])
         tx = np.lib.stride_tricks.as_strided(gx,
-            shape=(bs, ctx.groups,
+            shape=(bs, groups,
                    cin, oy, ox, H, W),
             strides=(*gx.strides[0:3], gx.strides[3]*ys, gx.strides[4]*xs, *gx.strides[3:5]),
             writeable=False,
         )
-        tw = w.reshape(ctx.groups, rcout, cin, H, W)
-        ctx.save_for_backward(tx, tw, x.shape)
+        tw = w.reshape(groups, rcout, cin, H, W)
 
-        ret = np.zeros((bs, ctx.groups, oy, ox, rcout), dtype=x.dtype)
-        for g in range(ctx.groups):
+        ret = np.zeros((bs, groups, oy, ox, rcout), dtype=x.dtype)
+        for g in range(groups):
             # ijYXyx,kjyx -> iYXk ->ikYX
             ret[:, g] += np.tensordot(tx[:, g], tw[g], ((1, 4, 5), (1, 2, 3)))
+            
+        self.pars.stride, self.pars.groups = stride, groups
+        self._tx, self._tw, self._xsh = tx, tw, x.shape
         return np.moveaxis(ret, 4, 2).reshape(bs, cout, oy, ox)
 
-    @staticmethod
-    def backward(ctx, deriv_output):
-        bs, _, oy, ox = deriv_output.shape
-        tx, tw, x_shape = ctx.saved_tensors
+    def backward(self, grad_y):
+        stride, groups = self.pars.stride, self.pars.groups
+        tx, tw, x_shape = self._tx, self._tw, self._xsh
+
+        bs, _, oy, ox = grad_y.shape
         _, rcout, cin, H, W = tw.shape
-        ys, xs = ctx.stride
-        OY, OX = x_shape[2:4]
+        ys, xs = stride
+        ggg = grad_y.reshape(bs, groups, rcout, oy, ox)
 
-        ggg = deriv_output.reshape(bs, ctx.groups, rcout, oy, ox)
-
-        gdw = np.zeros((ctx.groups, rcout, cin, H, W), dtype=tx.dtype)
-        for g in range(ctx.groups):
+        gdw = np.zeros((groups, rcout, cin, H, W), dtype=tx.dtype)
+        for g in range(groups):
             #'ikYX,ijYXyx -> kjyx'
             gdw[g] += np.tensordot(ggg[:, g], tx[:, g], ((0, 2, 3), (0, 2, 3)))
 
         # needs to be optimized
-        gdx = np.zeros((bs, ctx.groups, cin, OY, OX), dtype=tx.dtype)
+        OY, OX = x_shape[2:4]
+        gdx = np.zeros((bs, groups, cin, OY, OX), dtype=tx.dtype)
         for k in range(oy*ox):
             Y, X = k//ox, k % ox
             iY, iX = Y*ys, X*xs
             #gdx[:,:,: , iY:iY+H, iX:iX+W] += np.einsum('igk,gkjyx->igjyx', ggg[:,:,:,Y,X], tw)
-            for g in range(ctx.groups):
+            for g in range(groups):
                 tg = np.dot(ggg[:, g, :, Y, X].reshape(
                     bs, -1), tw[g].reshape(rcout, -1))
                 gdx[:, g, :, iY:iY+H, iX:iX+W] += tg.reshape((bs, cin, H, W))
 
-        return gdx.reshape((bs, ctx.groups*cin, OY, OX)), gdw.reshape((ctx.groups*rcout, cin, H, W))
+        return gdx.reshape((bs, groups*cin, OY, OX)), gdw.reshape((groups*rcout, cin, H, W))
 
 
 # @main

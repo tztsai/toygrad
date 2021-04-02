@@ -110,10 +110,16 @@ class Operation(ABC, metaclass=OperationMeta):
     """
     The baseclass of Parameter operations.
     An instantiation of it creates a context in the computation graph.
+    You can save information for backward by add new attributes to the context.
+    It may be a good idea to add an underscore before the names of these new attributes.
     """
     ndim_in, ndim_out = 0, 0  # num of dims of input and output on which op is applied
-    bound_axes = ()  # input-output axes that must be identical in deriv
-    omitted_axes = ()  # omitted input axes in deriv
+    omitted_axes = ()  # omitted (independent) input axes in deriv
+    bound_axes = ()
+    # if i is in bound_axes, then the deriv in the i-th dim of output wrt. the i-th dim 
+    # of input is non-zero only if their indices are the same
+    # eg. let deriv[i,j,r,s] = dy[i,j]/dx[r,s], if 0 is in bound_axes, then deriv[i,j,r,s] != 0
+    # only if i == r, so actually you only need to provide deriv[i,j,s] = dy[i,j]/dx[i,s]
     
     def __new__(cls, *args, **kwds):
         ctx = object.__new__(cls)
@@ -127,35 +133,32 @@ class Operation(ABC, metaclass=OperationMeta):
         """Computes the output and stores its derivative matrix in `self.deriv`."""
         raise NotImplementedError
     
-    def backward(self, output):
-        """Computes the gradients of inputs given the output.
-        Override this to define your own backprop method.
-        You may want to save something for the backprop when you apply the operation -
-        just add any attribute to `self` (its name better bigins with '_').
+    def backward(self, grad_out):
+        """Computes the gradients of inputs ∇x given the gradient of the output ∇y.
+        This default method requires you to provide self.deriv = dy/dx.
+        You can also override this to directly provide the gradients of inputs.
         Note that the return value should be iterable even if there is only one input.
-        The default steps: (theoretically correct but probably inefficient)
-        1. expand output grad: insert new axes into the output gradient ∇y
-        2. swap: swap the "constrained" axes of de/dy with the corresponding new axes
-        3. expand deriv: insert omitted exes into the partial derivatives dy/dx
-        4. multiply: multiply ∇y with dy/dx
-        5. sum: sum up the product along axes corresponding to the output to obtain ∇x
         """
         for i, x in enumerate(self.inputs):
             xdim, ydim = self.inputattr(ndim_in=i), self.ndim_out
             dy_dx = self.inputattr(deriv=i)
             bd_axs, om_axs = self.inputattr(bound_axes=i), self.inputattr(omitted_axes=i)
             off1, off2 = -xdim-ydim, -ydim  # offsets corresponding to input and output axes
-            y_grad = np.expand_dims(output.grad, tuple(range(off1, off2)))
-            for a in bd_axs: y_grad = np.swapaxes(y_grad, a+off1, a+off2)
+            # insert new axes corresponding to the input dims into y_grad
+            grad_y = np.expand_dims(grad_out, tuple(range(off1, off2)))
+            # swap the output axes if they are bound with the corresponding input axes
+            for a in bd_axs: grad_y = np.swapaxes(grad_y, a+off1, a+off2)
+            # insert the missing input and output axes in the deriv
             dy_dx = np.expand_dims(dy_dx, axis=tuple([a1+off1 for a1 in om_axs] +
                                                      [a2+off2 for a2 in bd_axs]))
-            # basically, ∇x = Σ_y (∇y * ∂y/∂x)
-            yield np.sum(y_grad * dy_dx, axis=tuple(range(off2, 0)))
+            # ∇x = Σ_y (∇y * ∂y/∂x)
+            yield np.sum(grad_y * dy_dx, axis=tuple(range(off2, 0)))
 
     def passgrads(self, output):
-        """Call the backward method and process the shape of the grads."""
+        """Call the backward method and process the shapes of the grads."""
         def backsplit(sh, k): return (sh[:-k], sh[-k:]) if k else (sh, ())
-        for i, (x, grad) in enumerate(zip(self.inputs, self.backward(output))):
+        grads = self.backward(output.grad)
+        for i, (x, grad) in enumerate(zip(self.inputs, grads)):
             xdim = self.inputattr(ndim_in=i)
             xsh_ext, xsh = backsplit(x.shape, xdim)
             gsh_ext, gsh = backsplit(grad.shape, xdim)
@@ -190,7 +193,7 @@ class Operation(ABC, metaclass=OperationMeta):
                 else arg for arg in args]
         assert not any(isinstance(val, Parameter) for val in kwds.values())
 
-        self.pars = NameSpace()
+        self.pars = NameSpace()  # save all inputs in self.pars
         params = inspect.signature(self.apply).parameters
         for i, p in enumerate(params.values()):
             val = args[i] if p.default is p.empty else p.default
