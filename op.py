@@ -274,6 +274,6 @@ def test():
     F = E.exp().sum()
     F.backward()
     [label(p, s) for s, p in locals().items() if isinstance(p, Parameter)]
-    show_compgraph(F)
+    return show_compgraph(F, 'dot')
 
 test()

@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import networkx as nx
+import graphviz as gv
 import numpy as np
 import random
 
@@ -40,11 +41,8 @@ def to_netx(lst):
             add_edges(child)
     g = nx.DiGraph()
     add_edges(lst)
-    # pos = nx.spectral_layout(g)
-    # pos = nx.circular_layout(g)
-    pos = nx.planar_layout(g)
-    # pos = nx.kamada_kawai_layout(g)#, pos=pos)
-    pos = nx.spring_layout(g, k=15/np.sqrt(g.size()), pos=pos)
+    n = len(g.nodes)
+    pos = nx.fruchterman_reingold_layout(g, k=2/np.sqrt(n))
     return g, pos
 
 
@@ -75,15 +73,15 @@ def label(node, lb=None):
 
 def show_plt(lst):
     g, pos = to_netx(lst)
-    fig = plt.figure(figsize=[8, 6])
+    fig = plt.figure(figsize=[10, 7.5])
     labels = {i: NODES[i][1] for i in g.nodes}
-    nx.draw(g, pos=pos, labels=labels, **graph_cfg)
+    nx.draw(g, labels=labels, **graph_cfg)
     plt.gca().margins(0.20)
     plt.show()
     
 graph_cfg = {
-    "font_size": 10,
-    "node_size": 2500,
+    "font_size": 8,
+    "node_size": 2000,
     "node_color": "white",
     "edgecolors": "black",
     "linewidths": 0.8,
@@ -130,7 +128,7 @@ def show_plotly(lst):
     
     # arrows
     def arrow(x0, y0, x1, y1, sq0, sq1):
-        s = 500
+        s = plotly_cfg.arrow_margin
         k = plotly_cfg.markersize / s
         dx, dy = x1-x0, y1-y0
         def shift(x, y, sq):
@@ -165,10 +163,28 @@ def show_plotly(lst):
 class plotly_cfg:
     colors = ['#ca4', '#28d']
     markersymbols = ['circle', 'square']
-    fontsize = 14
-    markersize = 50
+    fontsize = 10
+    markersize = 40
     linestyle = dict(width=0.8, color='#888')
+    arrow_margin = 400
     
+    
+def show_dot(lst):    
+    def add_edges(lst):
+        def add_node(n):
+            nid = hex(id(n))
+            shape = 'box' if np.shape(n) else 'oval'
+            g.node(nid, label(n), shape=shape)
+            return nid
+        node, *children = lst
+        for child in children:
+            g.edge(add_node(child[0]), add_node(node))
+            add_edges(child)
+    g = gv.Digraph('A toych computation graph')
+    add_edges(lst)
+    g.render()
+    return g
+
     
 def compgraph(param):
     def dfs(y, visited={None}):

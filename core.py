@@ -136,7 +136,6 @@ class Operation(ABC, metaclass=OperationMeta):
         The default steps: (theoretically correct but probably inefficient)
         1. expand output grad: insert new axes into the output gradient ∇y
         2. swap: swap the "constrained" axes of de/dy with the corresponding new axes
-        3. squeeze: remove the swapped new axes of ∇y
         3. expand deriv: insert omitted exes into the partial derivatives dy/dx
         4. multiply: multiply ∇y with dy/dx
         5. sum: sum up the product along axes corresponding to the output to obtain ∇x
@@ -145,13 +144,13 @@ class Operation(ABC, metaclass=OperationMeta):
             xdim, ydim = self.inputattr('ndim_in')[i], self.ndim_out
             dy_dx = self.inputattr('deriv')[i]
             bd_axs, om_axs = [self.inputattr(a)[i] for a in ['bound_axes', 'omitted_axes']]
-            off1, off2, off3 = -xdim-ydim, -ydim, len(bd_axs)-ydim
+            off1, off2 = -xdim-ydim, -ydim  # offsets corresponding to input and output axes
             y_grad = np.expand_dims(output.grad, tuple(range(off1, off2)))
             for a in bd_axs: y_grad = np.swapaxes(y_grad, a+off1, a+off2)
-            y_grad = np.squeeze(y_grad, axis=tuple(a+off2 for a in bd_axs))
-            dy_dx = np.expand_dims(dy_dx, axis=tuple(a-xdim+off3 for a in om_axs))
+            dy_dx = np.expand_dims(dy_dx, axis=tuple([a1+off1 for a1 in om_axs] +
+                                                     [a2+off2 for a2 in bd_axs]))
             # basically, ∇x = Σ_y (∇y * ∂y/∂x)
-            yield np.sum(y_grad * dy_dx, axis=tuple(range(off3, 0)))
+            yield np.sum(y_grad * dy_dx, axis=tuple(range(off2, 0)))
 
     def passgrads(self, output):
         """Call the backward method and process the shape of the grads."""
