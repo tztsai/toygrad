@@ -1,5 +1,6 @@
 import os, time, sys
 import logging
+import atexit
 import inspect
 import numpy as np
 from logging import DEBUG, INFO, WARN, ERROR
@@ -9,34 +10,32 @@ from contextlib import contextmanager
 from copy import deepcopy
 from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod
 
-
-# **** profiler ****
-DEBUG = os.getenv("DEBUG", None) is not None
-if DEBUG:
-    import atexit
-    debug_counts, debug_times = defaultdict(int), defaultdict(float)
-
-    def print_debug_exit():
-        for name, _ in sorted(debug_times.items(), key=lambda x: -x[1]):
-            print(f"{name:>20} : {debug_counts[name]:>6}",
-                  f"{debug_times[name]:>10.2f} ms")
-    atexit.register(print_debug_exit)
 
 class ProfileOp:
+    debug_counts, debug_times = defaultdict(int), defaultdict(float)
+
+    @classmethod
+    def print_debug_exit(cls):
+        for name, _ in sorted(cls.debug_times.items(), key=lambda x: -x[1]):
+            dbg(f"{name:>20} : {cls.debug_counts[name]:>6}",
+                  f"{cls.debug_times[name]:>10.2f} ms")
+    
     def __init__(self, name, x, backward=False):
         self.name, self.x = f"back_{name}" if backward else name, x
 
     def __enter__(self):
-        if DEBUG: self.st = time.time()
+        self.st = time.time()
 
     def __exit__(self, *junk):
-        if DEBUG:
-            et = (time.time()-self.st)*1000.
-            debug_counts[self.name] += 1
-            debug_times[self.name] += et
-            print(f"{self.name:>20} : {et:>7.2f} ms {[y.shape for y in self.x]}")
+        et = (time.time()-self.st)*1000.
+        self.debug_counts[self.name] += 1
+        self.debug_times[self.name] += et
+        dbg(f"{self.name:>20} : {et:>7.2f} ms {[np.shape(y) for y in self.x]}")
+
+            
+atexit.register(ProfileOp.print_debug_exit)
 
 
 # logging config
@@ -97,52 +96,45 @@ def DefaultNone(cls):
     return cls
 
 
-# def makemeta(getter):
-#     """A metaclass factory that customizes class instantiation.
+def makemeta(getter):
+    """A metaclass factory that customizes class instantiation.
     
-#     Args:
-#         getter: a function that returns a class to be instantiated
+    Args:
+        getter: a function that returns a class to be instantiated
         
-#     Returns:
-#         a metaclass that when called, returns an instance of the class returned by `getter`
-#     """
-#     class Meta(type):
-#         def __call__(self, *args, **kwds):
-#             cln = self.__name__
-            
-#             if type(self.__base__) is Meta:  # a subclass of the created class
-#                 obj = self.__new__(self)
-#                 obj.__init__(*args, **kwds)
-#                 return obj  # initialize as usual
-            
-#             elif len(args) < 1:
-#                 raise TypeError(f'{cln}() takes at least 1 argument')
-            
-#             elif isinstance(obj := args[0], self):
-#                 if len(args) > 1 or kwds:  # return a new instance
-#                     obj = self.__new__(type(args[0]))
-#                     obj.__init__(*args[1:], **kwds)
-#                 return obj
-            
-#             else:
-#                 try:
-#                     ret = getter(*args, **kwds)
-#                 except TypeError as e:
-#                     raise TypeError(f'{cln}() {e}')
-                
-#                 if isinstance(ret, self):
-#                     return ret
-                
-#                 if type(ret) is tuple:
-#                     cls, *ini_args = ret
-#                 else:
-#                     cls, ini_args = ret, ()
-                    
-#                 assert issubclass(cls, self)
-#                 obj = self.__new__(cls)
-#                 obj.__init__(*ini_args)
-#                 return obj
-#     return Meta
+    Returns:
+        a metaclass that when called, returns an instance of the class returned by `getter`
+    """
+    class Meta(type):
+        def __call__(self, *args, **kwds):
+            cln = self.__name__
+            if type(self.__base__) is Meta:  # a subclass of the created class
+                obj = self.__new__(self)
+                obj.__init__(*args, **kwds)
+                return obj  # initialize as usual
+            elif len(args) < 1:
+                raise TypeError(f'{cln}() takes at least 1 argument')
+            elif isinstance(obj := args[0], self):
+                if len(args) > 1 or kwds:  # return a new instance
+                    obj = self.__new__(type(args[0]))
+                    obj.__init__(*args[1:], **kwds)
+                return obj
+            else:
+                try:
+                    ret = getter(*args, **kwds)
+                except TypeError as e:
+                    raise TypeError(f'{cln}() {e}')
+                if isinstance(ret, self):
+                    return ret
+                if type(ret) is tuple:
+                    cls, *ini_args = ret
+                else:
+                    cls, ini_args = ret, ()
+                assert issubclass(cls, self)
+                obj = self.__new__(cls)
+                obj.__init__(*ini_args)
+                return obj
+    return Meta
 
 
 # def swap_methods(*args):

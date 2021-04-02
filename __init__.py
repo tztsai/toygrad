@@ -3,4 +3,7 @@ path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(path)
 
 from utils.dev import setloglevel
-setloglevel('INFO')
+setloglevel('DEBUG')
+
+from op import *
+from model import *

@@ -5,13 +5,11 @@ from collections import defaultdict
 
 from .dev import DefaultNone
 
-
 def onehot(x, k, *, cold=0, hot=1):
     m = np.full((len(x), k), cold, dtype=np.int)
     for i, j in enumerate(x):
         m[i, j] = hot
     return m
-
 
 @DefaultNone
 class BatchLoader:

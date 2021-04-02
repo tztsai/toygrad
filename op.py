@@ -1,26 +1,25 @@
 import numpy as np
 from core import Operation
-from my_utils.utils import main, interact
 
 
-def ScalarOp(op):
-    ndim_in, ndim_out = 0, 0
-    bound_axes, omitted_axes = (), ()
+def UnaryOp(op):
+    op.ndim_in, op.ndim_out = 0, 0
+    op.omitted_axes = op.bound_axes = ()
     return op
 
-@ScalarOp
+@UnaryOp
 class ReLU(metaclass=Operation):
     def apply(self, x):
         self.deriv = x >= 0
         return np.maximum(x, 0)
 
-@ScalarOp
+@UnaryOp
 class Log(metaclass=Operation):
     def apply(self, x):
         self.deriv = 1 / x
         return np.log(x)
 
-@ScalarOp
+@UnaryOp
 class Exp(metaclass=Operation):
     def apply(self, x):
         y = np.exp(x)
@@ -33,8 +32,7 @@ def ReduceOp(op):
     def apply_(self, x, axis=None):
         if axis is not None:
             if not np.shape(axis): axis = [axis]
-            self.bound_axes = tuple(-1 if a not in axis else a
-                                    for a in range(x.ndim))
+            self.bound_axes = [(a, a) for a in range(x.ndim) if a in axis]
         y = apply(self, x, axis=axis)
         self.ndim_in, self.ndim_out = x.ndim, y.ndim
         return y
@@ -69,55 +67,58 @@ class Max(metaclass=Operation):
 
 Function = object  # TODO: modify the classes inheriting from Function
 
-@ScalarOp
+
+def BinaryOp(op):
+    op.ndim_in, op.ndim_out = (0, 0), 0
+    op.omitted_axes = op.bound_axes = ((), ())
+    return op
+
+@BinaryOp
 class Add(metaclass=Operation):
     def apply(self, x, y):
         self.deriv = np.ones_like(x), np.ones_like(y)
         return x + y
 
-@ScalarOp
-class Sub(Function):
+@BinaryOp
+class Sub(metaclass=Operation):
     def apply(self, x, y):
         self.deriv = np.ones_like(x), -np.ones_like(y)
         return x + y
 
-@ScalarOp
+@BinaryOp
 class Mul(metaclass=Operation):
     def apply(self, x, y):
-        # self.deriv = (unbroadcast(y*deriv_output, x.shape),
-        #              unbroadcast(x*deriv_output, y.shape))
         self.deriv = y, x
         return x * y
+    
+@BinaryOp
+class TrueDiv(metaclass=Operation):
+    def apply(self, x, y):
+        self.deriv = 1/y, -x/y**2
+        return x / y
 
-@ScalarOp
+@BinaryOp
 class Pow(metaclass=Operation):
     def apply(self, x, y):
-        # self.deriv = (unbroadcast(y * (x**(y-1.0)) * deriv_output, x.shape),
-        #              unbroadcast((x**y) * np.log(x) * deriv_output, y.shape))
         self.deriv = y * x**(y-1), x**y * np.log(x)
         return x ** y
 
 
-class Reshape(Function):
-    @staticmethod
-    def forward(ctx, x, shape):
-        ctx.save_for_backward(x.shape)
+class Reshape(metaclass=Operation):
+    def apply(self, x, shape):
+        self._in_shape = x.shape
         return x.reshape(shape)
 
-    @staticmethod
-    def backward(ctx, deriv_output):
-        in_shape, = ctx.saved_tensors
-        return deriv_output.reshape(in_shape)
+    def backward(self, y):
+        yield y.grad.reshape(self._in_shape)
 
-class Transpose(Function):
-    @staticmethod
-    def forward(ctx, x, order):
-        ctx.save_for_backward(order)
+class Transpose(metaclass=Operation):
+    def forward(self, x, order):
+        self._order = order
         return np.transpose(x, order)
 
-    @staticmethod
-    def backward(ctx, x):
-        return np.transpose(x, np.argsort(ctx.order))
+    def backward(self, y):
+        yield np.transpose(y, np.argsort(self._order))
 
 def inner_slice(x, arg):
     padding = [(max(0, -p[0]), max(0, p[1]-x.shape[i]))
@@ -143,8 +144,8 @@ class Slice(Function):
 
 class MatMul(metaclass=Operation):
     ndim_in, ndim_out = (2, 2), 2
-    bound_axes = (0, -1), (-1, 1)
-    omitted_axes = (0,), (1,)
+    omitted_axes = [0], [1]
+    bound_axes = [(0, 0)], [(1, 1)]
     
     def apply(self, x, y):
         x, y = np.asarray(x), np.asarray(y)
@@ -154,8 +155,8 @@ class MatMul(metaclass=Operation):
         self.deriv = y, np.swapaxes(x, -1, -2)
         return x @ y
     
-    def backward(self, child):
-        grad_x, grad_y = super().backward(child)
+    def backward(self, output):
+        grad_x, grad_y = super().backward(output)
         return grad_x.reshape(self._x_sh), grad_y.reshape(self._y_sh)
 
 class Conv2D(Function):
@@ -218,19 +219,13 @@ class Conv2D(Function):
 # @main
 def test():
     from core import Parameter
-    from utils.graph import show_compgraph, LABELS
-    # A = Parameter([1, 2, 3])
-    # B = Parameter([4, -2, 1])
-    # C = A + B
-    C = Parameter([[[2,5,3],[6,-1,12]]] * 100)
-    D = Parameter([[2,5],[4,1],[7,4]])
+    from utils.graph import show_compgraph, label
+    A = Parameter(size=[100, 20, 1, 30])
+    B = Parameter(size=[100, 1, 50, 30])
+    C = (A * B).relu() / B.sum()
+    D = Parameter(size=[30, 40])
     E = C @ D
-    F = E.sum()
+    F = E.exp().sum()
     F.backward()
-    print(C.grad); print(D.grad)
-    LABELS.update((v, k) for k, v in locals().items() if len(k) == 1)
-    show_compgraph(E)
-    # x = Parameter(size=[10, 3])
-    # w = Parameter(size=[3, 2])
-
-test()
+    [label(par, s) for s, par in locals().items() if isinstance(par, Parameter)]
+    show_compgraph(F)
