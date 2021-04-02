@@ -72,13 +72,6 @@ class Model:
 
         return history
     
-def call_op(self, *args, **kwds):
-    if any(isinstance(arg, Model) for arg in args): return Model(self)
-    return call_op.orig(self, *args, **kwds)
-
-call_op.orig = Operation.AbstractOp.__call__
-Operation.AbstractOp.__call__ = call_op
-
 
 class Affine(Model):
     def __init__(self, dim_in, dim_out, with_bias=True):

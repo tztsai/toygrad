@@ -1,7 +1,6 @@
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
-import math
 import random
 
 
@@ -36,55 +35,49 @@ def to_netx(lst):
     def add_edges(lst):
         node, *children = lst
         for child in children:
-            add_node(child[0])
-            add_node(node)
+            label(child[0]), label(node)
             g.add_edge(id(child[0]), id(node))
             add_edges(child)
     g = nx.DiGraph()
     add_edges(lst)
     # pos = nx.spectral_layout(g)
     # pos = nx.circular_layout(g)
-    # pos = nx.planar_layout(g)
-    pos = nx.kamada_kawai_layout(g)#, pos=pos)
-    pos = nx.spring_layout(g, k=10/np.sqrt(g.size()), pos=pos)
+    pos = nx.planar_layout(g)
+    # pos = nx.kamada_kawai_layout(g)#, pos=pos)
+    pos = nx.spring_layout(g, k=15/np.sqrt(g.size()), pos=pos)
     return g, pos
 
-    
+
 LETTERS = tuple(map(chr, range(97, 123)))
-PARAM_LABELS, LABELS = {}, {}
+NODES, LABELS = {}, set()  # {id: (node, label)}, {label}
 
-def getlabel(node, label=None):
+def label(node, lb=None):
     nid = id(node)
-    if nid not in LABELS:
-        if label and nid not in PARAM_LABELS:
-            a = label
+    if nid not in NODES:
+        if np.shape(node):
+            if lb and nid not in LABELS:
+                a = lb
+            else:
+                a = random.choice(LETTERS)
+                while a in LABELS:
+                    a += random.choice(LETTERS)
+            lb = '%s%s' % (a, list(np.shape(node)))
+            LABELS.add(lb)
         else:
-            a = random.choice(LETTERS)
-            while a in PARAM_LABELS.values():
-                a += random.choice(LETTERS)
-        lb = '%s%s' % (a, list(np.shape(node)))
-        PARAM_LABELS[nid] = lb
-        return lb
-        
-def add_node(node, label=None):
-    nid = id(node)
-    if nid in LABELS:
-        return
-    elif np.shape(node):
-        lb = label(node)
-    else:
-        try:
-            x = float(node)
-            lb = '%.2e' % x
-        except:
-            lb = str(node)
-    LABELS[nid] = lb
+            try:
+                lb = '%.2e' % float(node)
+            except:
+                lb = str(type(node)) if hasattr(node, 'apply') else str(node)
+        NODES[nid] = (node, lb)
+    else: lb = NODES[nid][1]
+    return lb
 
-    
+
 def show_plt(lst):
     g, pos = to_netx(lst)
     fig = plt.figure(figsize=[8, 6])
-    nx.draw(g, pos=pos, labels=LABELS, **graph_cfg)
+    labels = {i: NODES[i][1] for i in g.nodes}
+    nx.draw(g, pos=pos, labels=labels, **graph_cfg)
     plt.gca().margins(0.20)
     plt.show()
     
@@ -112,10 +105,11 @@ def show_plotly(lst):
     edge_x, edge_y = np.transpose(list(edge_node_pos(g)))
     node_x, node_y = np.transpose([pos[n] for n in g.nodes])
     
-    node_types = [n in LABELS[n] in PARAM_LABELS for n in g.nodes]
+    node_types = [bool(np.ndim(NODES[n][0])) for n in g.nodes]
     marker_syms = [plotly_cfg.markersymbols[t] for t in node_types]
     colors = [plotly_cfg.colors[t] for t in node_types]
-    info = [str(PARAM_LABELS.get(lb := LABELS[n], lb)) for n in g.nodes]
+    labels = [NODES[n][1] for n in g.nodes]
+    info = [str(NODES[n][0]) for n in g.nodes]
             
     # edge_trace = pg.Scatter(
     #     x=edge_x, y=edge_y,
@@ -125,7 +119,7 @@ def show_plotly(lst):
     node_trace = pg.Scatter(
         x=node_x, y=node_y,
         mode='markers+text',
-        text=list(g.nodes),
+        text=labels,
         textfont_size=plotly_cfg.fontsize,
         hoverinfo='text',
         hovertext=info,
@@ -141,7 +135,7 @@ def show_plotly(lst):
         dx, dy = x1-x0, y1-y0
         def shift(x, y, sq):
             if sq: dr = max(abs(dx), abs(dy))
-            else: dr = math.sqrt(dx**2 + dy**2)
+            else: dr = np.sqrt(dx**2 + dy**2)
             return dx/dr, dy/dr
         [(dx0, dy0), (dx1, dy1)] = starmap(shift, [(x0, y0, sq0), (x1, y1, sq1)])
         x0 += k * dx0; x1 -= k * dx1
@@ -149,7 +143,8 @@ def show_plotly(lst):
         return dict(x=x0, ax=x1, y=y0, ay=y1, xref='x', yref='y',
                     axref='x', ayref='y', arrowwidth=1, arrowsize=1.2,
                     showarrow=True, arrowhead=2)
-    arrows = [arrow(*pos[v], *pos[u], sq0=v in PARAM_LABELS, sq1=u in PARAM_LABELS) for u, v in g.edges]
+    arrows = [arrow(*pos[v], *pos[u], sq0=np.ndim(NODES[v][0]), sq1=np.ndim(NODES[u][0]))
+              for u, v in g.edges]
     
     fig = pg.Figure(data=[node_trace],
                     layout=pg.Layout(
@@ -181,8 +176,7 @@ def compgraph(param):
         except: return [y]
         if ctx in visited: return [y]
         visited.add(ctx)
-        op = ctx.__class__
-        return [y, [op, *[dfs(x, visited) for x in ctx.inputs]]]
+        return [y, [ctx, *[dfs(x, visited) for x in ctx.inputs]]]
     return dfs(param)
 
 

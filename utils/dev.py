@@ -96,6 +96,14 @@ def DefaultNone(cls):
     return cls
 
 
+class NameSpace(dict):
+    def __getattribute__(self, name):
+        if super().__getattribute__('__contains__')(name):
+            return self[name]
+        else:
+            return super().__getattribute__(name)
+
+
 def makemeta(getter):
     """A metaclass factory that customizes class instantiation.
     

@@ -8,45 +8,133 @@ def UnaryOp(op):
     return op
 
 @UnaryOp
-class ReLU(metaclass=Operation):
+class ReLU(Operation):
     def apply(self, x):
         self.deriv = x >= 0
         return np.maximum(x, 0)
 
 @UnaryOp
-class Log(metaclass=Operation):
+class Log(Operation):
     def apply(self, x):
         self.deriv = 1 / x
         return np.log(x)
 
 @UnaryOp
-class Exp(metaclass=Operation):
+class Exp(Operation):
     def apply(self, x):
         y = np.exp(x)
         self.deriv = y
         return y
+    
+@UnaryOp
+class Tanh(Operation):
+    def apply(self, x):
+        y = np.tanh(x)
+        self.deriv = 1 - y**2
+        return y
 
 
-def ReduceOp(op):
+Function = object  # TODO: modify the classes inheriting from Function
+
+
+def BinaryOp(op):
+    op.ndim_in, op.ndim_out = (0, 0), 0
+    op.omitted_axes = op.bound_axes = ((), ())
+    return op
+
+@BinaryOp
+class Add(Operation):
+    def apply(self, x, y):
+        self.deriv = np.ones_like(x), np.ones_like(y)
+        return x + y
+
+@BinaryOp
+class Sub(Operation):
+    def apply(self, x, y):
+        self.deriv = np.ones_like(x), -np.ones_like(y)
+        return x + y
+
+@BinaryOp
+class Mul(Operation):
+    def apply(self, x, y):
+        self.deriv = y, x
+        return x * y
+    
+@BinaryOp
+class TrueDiv(Operation):
+    def apply(self, x, y):
+        self.deriv = 1/y, -x/y**2
+        return x / y
+
+@BinaryOp
+class Pow(Operation):
+    def apply(self, x, y):
+        self.deriv = y * x**(y-1), x**y * np.log(x)
+        return x ** y
+    
+
+def AxesOp(op):
     apply = op.apply
     def apply_(self, x, axis=None):
-        if axis is not None:
-            if not np.shape(axis): axis = [axis]
-            self.bound_axes = [(a, a) for a in range(x.ndim) if a in axis]
+        # if axis is None: axis = tuple(range(x.ndim))
+        # if type(axis) is int: axis = [axis]
+        # self.bound_axes = [a for a in range(x.ndim) if a in axis]
         y = apply(self, x, axis=axis)
         self.ndim_in, self.ndim_out = x.ndim, y.ndim
         return y
     op.apply = apply_
     return op
 
-@ReduceOp
-class Sum(metaclass=Operation):
-    def apply(self, x, axis=None):
-        self.deriv = np.ones_like(x)  #FIXME: this only applies to axis=None
-        return np.sum(x, axis=axis)
+@AxesOp
+class Reshape(Operation):
+    def apply(self, x, shape):
+        return x.reshape(shape)
 
-@ReduceOp
-class Max(metaclass=Operation):
+    def backward(self, y):
+        yield y.grad.reshape(self.pars.shape)
+
+@AxesOp
+class Transpose(Operation):
+    def forward(self, x, order):
+        return np.transpose(x, order)
+
+    def backward(self, y):
+        yield np.transpose(y, np.argsort(self.pars.order))
+
+def inner_slice(x, arg):
+    padding = [(max(0, -p[0]), max(0, p[1]-x.shape[i]))
+               for i, p in enumerate(arg)]
+    x = np.pad(x, padding)
+    slicee = [(p[0] + padding[i][0], p[1] + padding[i][0])
+              for i, p in enumerate(arg)]
+    return x[[slice(x[0], x[1], None) for x in slicee]]
+
+@AxesOp
+class Slice(Function):
+    def apply(self, x, arg=None):
+        self._shape = x.shape
+        return inner_slice(x, arg)
+
+    def backward(self, output):
+        return inner_slice(
+            output.grad, 
+            [(-p[0], output.grad.shape[i] + (self._shape[i]-p[1]))
+             for i, p in enumerate(self.pars.arg)])
+    
+@AxesOp
+class Sum(Operation):
+    def apply(self, x, axis=None):
+        return np.sum(x, axis=axis)
+    
+    def backward(self, output):
+        x = self.pars.x
+        axis = [axis] if type(axis := self.pars.axis) is int else axis
+        shape = [1 if axis is None or i in axis else x.shape[i]
+                 for i in range(len(x.shape))]
+        yield output.grad.reshape(shape) + np.zeros_like(x)
+        
+# @AxesOp
+class Max(Function):
     def apply(self, x, axis=None):
         axis = [axis] if type(axis) == int else axis
         ret = np.amax(x, axis=None if axis is None else tuple(
@@ -63,101 +151,58 @@ class Max(metaclass=Operation):
             ret = ret.reshape([x.shape[i]
                                for i in range(len(x.shape)) if i not in axis])
         return ret
-
-
-Function = object  # TODO: modify the classes inheriting from Function
-
-
-def BinaryOp(op):
-    op.ndim_in, op.ndim_out = (0, 0), 0
-    op.omitted_axes = op.bound_axes = ((), ())
-    return op
-
-@BinaryOp
-class Add(metaclass=Operation):
-    def apply(self, x, y):
-        self.deriv = np.ones_like(x), np.ones_like(y)
-        return x + y
-
-@BinaryOp
-class Sub(metaclass=Operation):
-    def apply(self, x, y):
-        self.deriv = np.ones_like(x), -np.ones_like(y)
-        return x + y
-
-@BinaryOp
-class Mul(metaclass=Operation):
-    def apply(self, x, y):
-        self.deriv = y, x
-        return x * y
     
-@BinaryOp
-class TrueDiv(metaclass=Operation):
-    def apply(self, x, y):
-        self.deriv = 1/y, -x/y**2
-        return x / y
+    
+##### 1D operations #####
 
-@BinaryOp
-class Pow(metaclass=Operation):
-    def apply(self, x, y):
-        self.deriv = y * x**(y-1), x**y * np.log(x)
-        return x ** y
+class SoftMax(Operation):
+    ndim_in, ndim_out = 1, 1
 
+    def apply(self, x):
+        ex = np.exp(x)
+        y = ex / np.sum(ex, axis=-1)
+        I = np.eye(y.shape[-1])
+        y_row, y_col = np.expand_dims(y, -2), np.expand_dims(y, -1)
+        self.deriv = y_col * (I - y_row)
+        return y
+    
+class CrossEntropy(Operation):
+    ndim_in, ndim_out = (1, 1), 0
+    
+    def apply(self, x, t):
+        y = -np.sum(t * np.log(x), axis=-1)
+        self.deriv = -t / x
+        return y
 
-class Reshape(metaclass=Operation):
-    def apply(self, x, shape):
-        self._in_shape = x.shape
-        return x.reshape(shape)
+class SoftMaxCrossEntropy(Operation):
+    ndim_in, ndim_out = (1, 1), 0
 
-    def backward(self, y):
-        yield y.grad.reshape(self._in_shape)
-
-class Transpose(metaclass=Operation):
-    def forward(self, x, order):
-        self._order = order
-        return np.transpose(x, order)
-
-    def backward(self, y):
-        yield np.transpose(y, np.argsort(self._order))
-
-def inner_slice(x, arg):
-    padding = [(max(0, -p[0]), max(0, p[1]-x.shape[i]))
-               for i, p in enumerate(arg)]
-    x = np.pad(x, padding)
-    slicee = [(p[0] + padding[i][0], p[1] + padding[i][0])
-              for i, p in enumerate(arg)]
-    return x[[slice(x[0], x[1], None) for x in slicee]]
-
-class Slice(Function):
-    @staticmethod
-    def forward(ctx, x, arg=None):
-        ctx.save_for_backward(x.shape)
-        return inner_slice(x, arg)
-
-    @staticmethod
-    def backward(ctx, deriv_output):
-        shape, = ctx.saved_tensors
-        narg = [(0-p[0], deriv_output.shape[i]+(shape[i]-p[1]))
-                for i, p in enumerate(ctx.arg)]
-        return inner_slice(deriv_output, narg)
+    def apply(self, x, t):
+        ex = np.exp(x)
+        p = ex / np.sum(ex, axis=-1, keepdims=True)
+        y = -np.sum(t * np.log(p), axis=-1)
+        self.deriv = p - t
+        return y
 
 
-class MatMul(metaclass=Operation):
+##### 2D operations ######
+
+class MatMul(Operation):
     ndim_in, ndim_out = (2, 2), 2
     omitted_axes = [0], [1]
-    bound_axes = [(0, 0)], [(1, 1)]
+    bound_axes = [0], [1]
     
     def apply(self, x, y):
         x, y = np.asarray(x), np.asarray(y)
-        self._x_sh, self._y_sh = x.shape, y.shape
+        self._xsh, self._ysh = x.shape, y.shape
         while x.ndim < 2: x = np.expand_dims(x, 0)
         while y.ndim < 2: y = np.expand_dims(y, -1)
         self.deriv = y, np.swapaxes(x, -1, -2)
         return x @ y
     
-    def backward(self, output):
-        grad_x, grad_y = super().backward(output)
-        return grad_x.reshape(self._x_sh), grad_y.reshape(self._y_sh)
+    def passgrads(self, output):
+        grad_x, grad_y = super().passgrads(output)
+        return grad_x.reshape(self._xsh), grad_y.reshape(self._ysh)
 
 class Conv2D(Function):
     @staticmethod
@@ -216,6 +261,7 @@ class Conv2D(Function):
 
         return gdx.reshape((bs, ctx.groups*cin, OY, OX)), gdw.reshape((ctx.groups*rcout, cin, H, W))
 
+
 # @main
 def test():
     from core import Parameter
@@ -227,5 +273,7 @@ def test():
     E = C @ D
     F = E.exp().sum()
     F.backward()
-    [label(par, s) for s, par in locals().items() if isinstance(par, Parameter)]
+    [label(p, s) for s, p in locals().items() if isinstance(p, Parameter)]
     show_compgraph(F)
+
+test()
