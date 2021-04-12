@@ -1,14 +1,12 @@
-# A neural network library
+# A toyish neural network library
 
-## Usage
+## TODO list
 
-- Set `model.training` to `True` or `False` to switch between the training mode and the evaluation mode.
-- Use `Node(<NodeID>)` to find a certain node.
-
-## How to 
-
-## TODO
-
-- [ ] make basic sequential models work  
-- [ ] implement CNN
-- [ ] write README
+* [ ] add regularization
+* [x] implement CNN
+* [ ] implement VAE
+* [ ] implement GAN
+* [x] implement ResNet
+* [x] implement LSTM
+* [ ] build RL networks to play with gym
+* [ ] train an RNN/transformer to generate text from 史记

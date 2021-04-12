@@ -2,8 +2,10 @@ import sys, os
 path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(path)
 
-from utils.dev import setloglevel
-setloglevel('DEBUG')
-
-from op import *
+import utils
+import model
 from model import *
+from utils.graph import show_compgraph
+from utils.dev import setloglevel
+
+setloglevel('INFO')

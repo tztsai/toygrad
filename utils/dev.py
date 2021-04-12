@@ -2,15 +2,17 @@ import os, time, sys
 import logging
 import atexit
 import inspect
+import itertools
 import numpy as np
+from contextlib import contextmanager
 from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
-from functools import lru_cache, wraps
+from functools import lru_cache, wraps, partial
 from contextlib import contextmanager
 from copy import deepcopy
-from collections import defaultdict, namedtuple
+from collections import defaultdict, namedtuple, OrderedDict
 from typing import Union, Optional, List, Tuple
-from abc import ABC, ABCMeta, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 
 
 class ProfileOp:
@@ -19,8 +21,8 @@ class ProfileOp:
     @classmethod
     def print_debug_exit(cls):
         for name, _ in sorted(cls.debug_times.items(), key=lambda x: -x[1]):
-            dbg(f"{name:>20} : {cls.debug_counts[name]:>6}",
-                  f"{cls.debug_times[name]:>10.2f} ms")
+            dbg(f"{name:>20} : {cls.debug_counts[name]:>6} "
+                f"{cls.debug_times[name]:>10.2f} ms")
     
     def __init__(self, name, x, backward=False):
         self.name, self.x = f"back_{name}" if backward else name, x
@@ -34,16 +36,14 @@ class ProfileOp:
         self.debug_times[self.name] += et
         dbg(f"{self.name:>20} : {et:>7.2f} ms {[np.shape(y) for y in self.x]}")
 
-            
 atexit.register(ProfileOp.print_debug_exit)
 
 
-# logging config
-#%%
 class LogFormatter(logging.Formatter):
 
     formats = {
-        DEBUG: ("%(module)s.%(funcName)s, L%(lineno)s:\n  %(msg)s"),
+        # DEBUG: "%(module)s.%(funcName)s, L%(lineno)s:\n  %(msg)s",
+        DEBUG: "DEBUG: %(msg)s",
         INFO:  "%(msg)s",
         WARN:  "WARNING: %(msg)s",
         ERROR: "ERROR: %(msg)s"
@@ -54,9 +54,8 @@ class LogFormatter(logging.Formatter):
         fmt = LogFormatter.formats.get(record.levelno, self._fmt)
         record.msg = record.msg % record.args
         return fmt % dct
-        
 
-logLevel = logging.DEBUG
+logLevel = logging.INFO
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logLevel)
@@ -69,17 +68,45 @@ logger.addHandler(logHandler)
 dbg = logger.debug
 info = logger.info
 warn = logger.warning
+
     
 def setloglevel(level):
     logger.setLevel(level)
-    
 
-def pbar(iterable, **kwds):
+def ensure_seq(a):
+    return [a] if type(a) not in [list, tuple] else a
+
+def pbar(iterable, unit=' batches', **kwds):
     """A process bar."""
     if logger.level > logLevel: return iterable
-    return tqdm.tqdm(iterable, bar_format='\t{l_bar}{bar:20}{r_bar}', **kwds)
+    return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)
+    
+def signature_str(args, kwds):
+    kwdstrs = [f'{k}={repr(v)}' for k, v in kwds.items()]
+    return f"({', '.join([*map(repr, args), *kwdstrs])})"
 
+def bind_pars(f, *args, **kwds):
+    s = inspect.signature(f)
+    bound_pars = s.bind(*args, **kwds)
+    bound_pars.apply_defaults()
+    return bound_pars.arguments, s.parameters
 
+def split_args_kwds(binds, pars):
+    args, kwds = [], {}
+    for name, par in pars.items():
+        if par.kind == par.VAR_POSITIONAL:
+            args.extend(binds[name])
+        elif par.kind == par.VAR_KEYWORD:
+            kwds.update(binds[name])
+        elif par.default == par.empty:
+            args.append(binds[name])
+        else:
+            kwds[name] = binds[name]
+    return tuple(args), kwds
+
+def copyclass(cls):
+    return type(cls)(cls.__name__, cls.__bases__, dict(cls.__dict__))
+    
 def DefaultNone(cls):
     """A class decorator that changes the `__getattribute__` method so that for
        instances of the decorated class, if any of its instance attribute is None and
@@ -95,57 +122,70 @@ def DefaultNone(cls):
     cls.__getattribute__ = get
     return cls
 
-
-class NameSpace(dict):
-    def __getattribute__(self, name):
-        if super().__getattribute__('__contains__')(name):
-            return self[name]
-        else:
-            return super().__getattribute__(name)
-
-    def __setattr__(self, name, value):
-        self[name] = value
-
-
-def makemeta(getter):
-    """A metaclass factory that customizes class instantiation.
-    
-    Args:
-        getter: a function that returns a class to be instantiated
+class Cache(dict):
+    def __init__(self, size=128):
+        self.size = size
+        self.queue = []
         
-    Returns:
-        a metaclass that when called, returns an instance of the class returned by `getter`
-    """
-    class Meta(type):
-        def __call__(self, *args, **kwds):
-            cln = self.__name__
-            if type(self.__base__) is Meta:  # a subclass of the created class
-                obj = self.__new__(self)
-                obj.__init__(*args, **kwds)
-                return obj  # initialize as usual
-            elif len(args) < 1:
-                raise TypeError(f'{cln}() takes at least 1 argument')
-            elif isinstance(obj := args[0], self):
-                if len(args) > 1 or kwds:  # return a new instance
-                    obj = self.__new__(type(args[0]))
-                    obj.__init__(*args[1:], **kwds)
-                return obj
-            else:
-                try:
-                    ret = getter(*args, **kwds)
-                except TypeError as e:
-                    raise TypeError(f'{cln}() {e}')
-                if isinstance(ret, self):
-                    return ret
-                if type(ret) is tuple:
-                    cls, *ini_args = ret
-                else:
-                    cls, ini_args = ret, ()
-                assert issubclass(cls, self)
-                obj = self.__new__(cls)
-                obj.__init__(*ini_args)
-                return obj
-    return Meta
+    def __setitem__(self, key, value):
+        if key not in self:
+            self.queue.append(key)
+        if len(self.queue) > self.size:
+            for _ in range(5):
+                self.pop(self.queue.pop(0))
+        super().__setitem__(key, value)
+
+
+# class NameSpace(dict):
+#     def __getattribute__(self, name):
+#         if super().__getattribute__('__contains__')(name):
+#             return self[name]
+#         else:
+#             return super().__getattribute__(name)
+
+#     def __setattr__(self, name, value):
+#         self[name] = value
+
+
+# def makemeta(getter):
+#     """A metaclass factory that customizes class instantiation.
+    
+#     Args:
+#         getter: a function that returns a class to be instantiated
+        
+#     Returns:
+#         a metaclass that when called, returns an instance of the class returned by `getter`
+#     """
+#     class Meta(type):
+#         def __call__(self, *args, **kwds):
+#             cln = self.__name__
+#             if type(self.__base__) is Meta:  # a subclass of the created class
+#                 obj = self.__new__(self)
+#                 obj.__init__(*args, **kwds)
+#                 return obj  # initialize as usual
+#             elif len(args) < 1:
+#                 raise TypeError(f'{cln}() takes at least 1 argument')
+#             elif isinstance(obj := args[0], self):
+#                 if len(args) > 1 or kwds:  # return a new instance
+#                     obj = self.__new__(type(args[0]))
+#                     obj.__init__(*args[1:], **kwds)
+#                 return obj
+#             else:
+#                 try:
+#                     ret = getter(*args, **kwds)
+#                 except TypeError as e:
+#                     raise TypeError(f'{cln}() {e}')
+#                 if isinstance(ret, self):
+#                     return ret
+#                 if type(ret) is tuple:
+#                     cls, *ini_args = ret
+#                 else:
+#                     cls, ini_args = ret, ()
+#                 assert issubclass(cls, self)
+#                 obj = self.__new__(cls)
+#                 obj.__init__(*ini_args)
+#                 return obj
+#     return Meta
 
 
 # def swap_methods(*args):
@@ -175,52 +215,8 @@ def makemeta(getter):
 #         return wraps(f)(dec(f))
 #     return wrapped
 
-
-# @decorator
-# def parse_name(f):
-#     def call(*args, **kwds):
-#         if len(args) != 1 or kwds or type(args[0]) is not str:
-#             raise TypeError(f"only accepts a single str argument")
-#         return f(args[0].lower())
-#     return call
-
-
-# def squeeze(x):
-#     if is_seq(x):
-#         if len(x) == 1:
-#             return squeeze(x[0])
-#         else:
-#             return type(x)(squeeze(i) for i in x)
-#     else:
-#         return x
-    
-    
-# def is_seq(x):
-#     return isinstance(x, (list, tuple))
-
-
-# def is_pair(x):
-#     return isinstance(x, tuple) and len(x) == 2
-    
-    
-# def seq_repr(obj):
-#     if is_seq(obj):
-#         return ', '.join(map(str, map(repr, obj)))
-#     else:
-#         return repr(obj)
-
-
 # def slice_grid(h, w, sh, sw, dh=1, dw=1):
 #     return [[(slice(i, i+sh), slice(j, j+sw))
 #              for j in range(0, w - sw, dh)]
 #             for i in range(0, h - sh, dw)]
 
-
-# def int_or_pair(x):
-#     if type(x) == int:
-#         y = x
-#     else:
-#         x, y = x
-#         assert type(x) is int and type(y) is int
-#     return x, y
-    
