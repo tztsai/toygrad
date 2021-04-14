@@ -90,6 +90,9 @@ class Model(AbstractFunction):
     def load(cls, filename):
         with open(filename, 'rb') as f:
             return pickle.load(f, encoding='bytes')
+        
+    # def __getstate__(self):
+    #     return self.__dict__.copy()        
 
     @staticmethod
     def getloss(obj):

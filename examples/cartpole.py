@@ -50,14 +50,13 @@ def episode_gif(states, gifname=None):
         frames.append(env.render(mode='rgb_array'))
         env.env.state = state
     if gifname is not None:
-        # gifname = f'cartpole-{len(states)}eps.gif'
         # makevideo(frames, gifname+'.avi', frameSize=frames[0].shape[:2])
         makegif(frames, gifname)
 
 
 try: agent = Model.load('cartpole-agent')
 except FileNotFoundError: agent = Agent(2)
-optim = Adam(lr=1e-3)
+optim = Adam(lr=1e-3, reg='l2', lamb=0.01)
 
 
 def loss_func(memory, outputs=None):
@@ -109,7 +108,7 @@ for eps in (pb := pbar(range(500), unit='eps')):
     
     if eps_reward > 200:
         agent.save('cartpole-agent')
-        episode_gif(obs_record)
+        episode_gif(obs_record, f'cartpole:{eps_reward}.gif')
         
     # env.close()
     memory.clear()

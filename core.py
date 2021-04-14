@@ -14,7 +14,6 @@ class Param(np.ndarray):
     rng = np.random.default_rng()
     grad_lim = 1e8  # magnitude limit of each element of the gradient
     kinds = dict(constant=0, variable=1, trainable=2)
-    # max_backwards = 10  # max number of backward passes in a single backprop
 
     def __new__(cls, value=None, *, size=None, mean=0, scale=None,
                 dtype=np.float, kind='trainable', name=None):
@@ -46,6 +45,10 @@ class Param(np.ndarray):
             if size is not None:  # fill an array of the given size
                 value = np.full(size, value, dtype=dtype)
         return np.asarray(value, dtype=dtype).view(cls)
+    
+    def __array_finalize__(self, obj):
+        if not isinstance(obj, Param) or not hasattr(self, 'name'):
+            self.__init__(kind='constant')
         
     def __init__(self, *args, kind='trainable', name=None, **kwds):
         self.name = name if name else type(self).__name__
@@ -115,14 +118,25 @@ class Param(np.ndarray):
         return cp
     
     def __getattr__(self, name):
-        if 'name' not in self.__dict__:  # not initialized
-            self.__init__(kind='constant')
         if name in Param.kinds:
             return self.kind == Param.kinds[name]
         return super().__getattribute__(name)
 
-    def __hash__(self): return id(self)
+    def __hash__(self):
+        return id(self)
 
+    def __reduce__(self):
+        """Used for pickling the Param object."""
+        pickled_state = super().__reduce__()
+        my_state = self.__dict__.copy()
+        my_state['_ctx'] = None
+        my_state['_grad'] = 0 if self.trainable else None
+        return (*pickled_state[:2], (*pickled_state[2], my_state))
+        
+    def __setstate__(self, state):
+        super().__setstate__(state[:-1])
+        self.__dict__.update(state[-1])
+    
     def __repr__(self):
         s = f'{self.name}(#{list(self.shape)})' if self.size > 1 else super().__repr__()
         return s[:-1] + ', %s)' % next(k for k, v in Param.kinds.items() if v == self.kind)

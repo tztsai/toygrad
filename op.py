@@ -3,7 +3,8 @@ Inherit from Operation to add differentiable operations (deriv or backward must 
 Functions of Params can be automatically differentiable due to these basic operations.
 Decorate a function using `registermethod` to register it as a method of the Param class.
 
-Implementations of sum, max, reshape, transpose, Pool2D, BatchNorm2D, Conv2D 
+Implementations of sum, max, reshape, transpose, Pool2D, BatchNorm2D, Conv2D, etc. have referred
+to "tinygrad" (https://github.com/geohot/tinygrad).
 
 There can be 3 ways to apply a function or operation:
 >>> x = Param(size=[5, 3])
