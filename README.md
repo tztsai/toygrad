@@ -1,15 +1,15 @@
 # Toych
 
-A deep learning framework. No kidding.
+State-of-the-art deep learning framework. Just kidding.
 
 ## TODO list
 
 * [x] add regularization
+* [x] build an RL agent to play with gym
 * [x] implement CNN
+* [x] implement LSTM
 * [ ] implement VAE
 * [ ] implement GAN
-* [x] implement ResNet
-* [x] implement LSTM
-* [x] build RL networks to play with gym
+* [ ] implement ResNet
 * [ ] let toych play with 2048
 * [ ] train a transformer to generate ancient Chinese text

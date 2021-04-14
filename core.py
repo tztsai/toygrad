@@ -272,7 +272,7 @@ class Operation(Function):
         Note that the return value should be iterable even if there is only one input.
         """
         for i, x in enumerate(self.inputs):
-            if isinstance(x, Param) and not x.constant:  # ∇x = Σ_y (∇y * ∂y/∂x)
+            if isinstance(x, Param) and not x.constant:  # ∂e/∂x_i = Σ_j (∂e/∂y_j * ∂y_j/∂x_i)
                 xdim, ydim = ensure_seq(self.ndim_in)[i], self.ndim_out
                 dy_dx = ensure_seq(self.deriv)[i]
                 grad_y = np.expand_dims(grad_out, tuple(range(-xdim-ydim, -ydim)))

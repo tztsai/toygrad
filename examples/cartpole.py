@@ -11,7 +11,7 @@ class Agent(Model):
     def __init__(self, dim_out):
         self.apply = Compose(
             Affine(24), dropout(0.4), ReLU,
-            Affine(3), tanh,
+            Affine(4), tanh,
             Affine(dim_out), softmax
         )
         
@@ -23,7 +23,7 @@ class Agent(Model):
 
     
 class Memory(dict):
-    replay_buffer_size = 0
+    replay_buffer_size = 2
     
     def __init__(self):
         self.buffer = []
@@ -56,7 +56,7 @@ def episode_gif(states, gifname=None):
 
 try: agent = Model.load('cartpole-agent')
 except FileNotFoundError: agent = Agent(2)
-optim = Adam(lr=1e-3, reg='l2', lamb=0.01)
+optim = Adam(lr=5e-3, reg='l2', lamb=0.01)
 
 
 def loss_func(memory, outputs=None):
@@ -80,7 +80,7 @@ eps_rewards = []
 fig, ax = plt.subplots()
 # fig.show()
 
-for eps in (pb := pbar(range(500), unit='eps')):
+for eps in (pb := pbar(range(1000), unit='eps')):
     obs = env.reset()
     obs_record = []
     done = False
@@ -106,9 +106,9 @@ for eps in (pb := pbar(range(500), unit='eps')):
     #     ax.plot(np.arange(eps+1), smooth(eps_rewards))
     #     plt.pause(0.01)
     
-    if eps_reward > 200:
+    if eps_reward > 100:
         agent.save('cartpole-agent')
-        episode_gif(obs_record, f'cartpole:{eps_reward}.gif')
+        episode_gif(obs_record)#, f'cartpole:{eps_reward}.gif')
         
     # env.close()
     memory.clear()

@@ -9,4 +9,5 @@ pickle.dump(a, open('a', 'wb'))
 model.save('tmp')
 a_ = pickle.load(open('a', 'rb'))
 model_ = Model.load('tmp')
-print(model_.__dict__)
+for f in ['a', 'tmp']:
+    os.remove(f)
