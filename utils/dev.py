@@ -81,31 +81,32 @@ def pbar(iterable, unit=' batches', **kwds):
     if logger.level > logLevel: return iterable
     return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)
     
-def signature_str(args, kwds):
+def signature_str(*args, **kwds):
     kwdstrs = [f'{k}={repr(v)}' for k, v in kwds.items()]
     return f"({', '.join([*map(repr, args), *kwdstrs])})"
+
+def array_at_first(args):
+    return args and isinstance(args[0], np.ndarray)
 
 def bind_pars(f, *args, **kwds):
     s = inspect.signature(f)
     bound_pars = s.bind(*args, **kwds)
     bound_pars.apply_defaults()
-    return bound_pars.arguments, s.parameters
+    return bound_pars.arguments
 
-def split_args_kwds(binds, pars):
-    args, kwds = [], {}
-    for name, par in pars.items():
-        if par.kind == par.VAR_POSITIONAL:
-            args.extend(binds[name])
-        elif par.kind == par.VAR_KEYWORD:
-            kwds.update(binds[name])
-        elif par.default == par.empty:
-            args.append(binds[name])
-        else:
-            kwds[name] = binds[name]
-    return tuple(args), kwds
+def backward_stack():
+    stk = inspect.stack()
+    return [f.frame.f_locals['ctx'] for f in stk if f.function == '_backward']
 
 def copyclass(cls):
     return type(cls)(cls.__name__, cls.__bases__, dict(cls.__dict__))
+
+@contextmanager
+def set_temporarily(obj, attr, val):
+    cur_val = getattr(obj, attr)
+    setattr(obj, attr, val)
+    yield
+    setattr(obj, attr, cur_val)
     
 def DefaultNone(cls):
     """A class decorator that changes the `__getattribute__` method so that for

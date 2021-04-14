@@ -2,7 +2,7 @@ from core import AbstractFunction
 from op import *
 from optim import *
 from utils.dev import defaultdict, info, dbg, warn, pbar
-from utils import BatchLoader, setparnames, graph
+from utils import BatchLoader, setparnames, graph, pickle
 
 
 class Model(AbstractFunction):
@@ -82,6 +82,15 @@ class Model(AbstractFunction):
 
         return dict(history)
 
+    def save(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
+            
+    @classmethod
+    def load(cls, filename):
+        with open(filename, 'rb') as f:
+            return pickle.load(f, encoding='bytes')
+
     @staticmethod
     def getloss(obj):
         if callable(obj):
@@ -119,7 +128,10 @@ class Model(AbstractFunction):
 class Compose(Model):
     def __init__(self, *operations):
         self.ops = operations
-
+        
+    def __getitem__(self, i):
+        return self.ops[i]
+    
     def apply(self, input):
         for op in self.ops:
             input = output = op(input)

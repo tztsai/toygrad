@@ -13,7 +13,7 @@ There can be 3 ways to apply a function or operation:
 """
 import numpy as np
 from core import Param, Function, Operation, registermethod
-from utils.dev import ensure_seq, abstractmethod, signature_str, ABC
+from utils.dev import ensure_seq, abstractmethod, ABC
 
 
 class UnaryOp(Operation):
@@ -53,28 +53,30 @@ class ReLU(UnaryOp):
 
 class dropout(UnaryOp):
     partial = True
-    def apply(self, x, p=0.5):
+    cache = False
+    def apply(self, x, p=0.5, fixed=False):
         if not Param.training: return x
-        sample = np.random.rand(*np.shape(x))
-        mask = (sample < 1-p) / (1-p)
-        self.deriv = mask
-        return mask * x
+        if not fixed or not hasattr(self, 'mask'):
+            sample = np.random.rand(*np.shape(x))
+            self.mask = (sample < 1-p) / (1-p)
+        self.deriv = self.mask
+        return self.mask * x
 
 
 class BinaryOp(Operation):
     ndim_in, ndim_out = (0, 0), 0
 
-class add(BinaryOp):
+class Add(BinaryOp):
     def apply(self, x, y):
         self.deriv = np.ones_like(x), np.ones_like(y)
         return x + y
 
-class mul(BinaryOp):
+class Mul(BinaryOp):
     def apply(self, x, y):
         self.deriv = y, x
         return x * y
 
-class pow(BinaryOp):
+class Pow(BinaryOp):
     def apply(self, x, y):
         self.deriv = y * x**(y-1), None #x**y * np.log(x)
         return x ** y
@@ -103,7 +105,7 @@ class smce(Operation):
 
 ### operations that overrides the `backward` method ###
 
-class matmul(Operation):
+class MatMul(Operation):
     def apply(self, x, y):
         x, y = np.asarray(x), np.asarray(y)
         while x.ndim < 2: x = np.expand_dims(x, 0)
@@ -114,8 +116,7 @@ class matmul(Operation):
     def backward(self, grad_out):
         grads = [grad_out @ np.swapaxes(self._y, -1, -2),
                  np.swapaxes(self._x, -1, -2) @ grad_out]
-        for x, g in zip(self.inputs, grads):
-            yield self.debroadcast(x, 2, g)
+        return (g.reshape(x.shape) for x, g in zip(self.inputs, grads))
 
 class reshape(Operation):
     def apply(self, x, shape):
@@ -141,6 +142,16 @@ class getitem(Operation):
         grad_x = np.zeros_like(self._x)
         grad_x[self._idx] = grad_y
         yield grad_x
+        
+class concat(Operation):
+    def apply(self, x, y):
+        """Horizontally concat two arrays together."""
+        self._ax = 1 if np.ndim(x) > 1 else 0
+        self._i = x.shape[self._ax]
+        return np.hstack([x, y])
+    
+    def backward(self, grad_out):
+        return np.split(grad_out, [self._i], axis=self._ax)
         
 # class Slice(Operation):
     # def apply(self, x, arg=None):
@@ -170,7 +181,7 @@ def apply_to_axes(f):
 class sum(Operation):
     @apply_to_axes
     def apply(self, x, axes, keepdims=False):
-        shape = [1 if i in axes else s for i, s in enumerate(x.shape)]
+        shape = [1 if i in axes else s for i, s in enumerate(np.shape(x))]
         self._shape = shape
         return np.sum(x, axis=axes, keepdims=keepdims)
     
@@ -181,7 +192,7 @@ class max(Operation):
     @apply_to_axes
     def apply(self, x, axes, keepdims=False):
         y = np.max(x, axis=axes, keepdims=keepdims)
-        shape = [1 if i in axes else s for i, s in enumerate(x.shape)]
+        shape = [1 if i in axes else s for i, s in enumerate(np.shape(x))]
         t = (x == y.reshape(shape))
         d = t.sum(axis=axes, keepdims=True)
         self._sh, self._d = shape, t/d
@@ -194,13 +205,13 @@ class max(Operation):
 ### functions that are registered as Param methods ###
 
 @registermethod
-def truediv(x, y): return x * (y ** -1.)
+def TrueDiv(x, y): return x * (y ** -1.)
 
 @registermethod
-def sub(x, y): return x + (-1. * y)
+def Sub(x, y): return x + (-1. * y)
 
 @registermethod
-def neg(x): return 0. - x
+def Neg(x): return 0. - x
 
 @registermethod
 def sqrt(x): return x ** 0.5
@@ -210,8 +221,8 @@ def sigmoid(x): return exp(x) / (1 + exp(x))
 
 @registermethod
 def mean(x, axis=None):
-    s = x.sum(axis=axis)
-    return s * np.prod(s.shape) / np.prod(x.shape)
+    s = sum(x, axis=axis)
+    return s * np.prod(s.shape) / np.prod(np.shape(x))
 
 @registermethod
 def mse(x, y, axis=None):
@@ -228,11 +239,13 @@ def flatten(x):
 
 
 ### other functions ###
-
-class Pool2D(Function, ABC):
+    
+class Pool2D(Function):
     register = True
     partial = True
-    reduce = lambda pools, axis: NotImplemented
+    
+    def apply(self, im, size=(2,2), stride=1):
+        return self.reduce(self.pool2d(im, *size, stride), axis=(-3, -1))
     
     @staticmethod
     def pool2d(im, py, px, st=1):
@@ -240,8 +253,8 @@ class Pool2D(Function, ABC):
         xup = im[:, :, :im.shape[-2]-ry:st, :im.shape[-1]-rx:st]
         return xup.reshape(shape=(*im.shape[:-2], dy, py, dx, px))
     
-    def apply(self, im, size=(2,2), stride=1):
-        return self.reduce(self.pool2d(im, *size, stride), axis=(-3, -1))
+    @staticmethod
+    def reduce(pools, axis): raise NotImplementedError
 
 class MeanPool2D(Pool2D):
     reduce = mean
@@ -268,7 +281,7 @@ class Conv2D(Operation):
     def update_args(self, input):
         if not self.built: self.build(input)
         return super().update_args(input, filters=self.filters,
-                            stride=self.stride, groups=self.groups)
+                                   stride=self.stride, groups=self.groups)
     
     def __call__(self, *args, **kwds):
         output = super().__call__(*args, **kwds)

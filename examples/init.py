@@ -1,7 +1,7 @@
 import sys, os
 
-if 'tests' in os.listdir():
-    os.chdir('tests')
+if 'examples' in os.listdir():
+    os.chdir('examples')
 sys.path.extend(['..'])
 
 from core import *

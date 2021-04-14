@@ -1,10 +1,13 @@
 import functools
 import inspect
+import pickle
 import random
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import ArtistAnimation
 from collections import defaultdict
-from .dev import DefaultNone
+from .dev import DefaultNone, pbar
 
 
 def onehot(x, k, *, cold=0, hot=1):
@@ -16,7 +19,8 @@ def onehot(x, k, *, cold=0, hot=1):
 def standardize(x_tr, *x_ts):
     m = x_tr.mean(axis=0)
     sd = x_tr.std(axis=0)
-    return [(x-m)/sd for x in (x_tr, *x_ts)]
+    nxs = [(x-m)/sd for x in (x_tr, *x_ts)]
+    return nxs[0] if not x_ts else nxs
 
 def train_val_split(inputs, labels, ratio=0.8):
     N = len(inputs)
@@ -73,7 +77,19 @@ def setparnames(**bindings):
             try: par.name = name
             except: pass
 
+def makegif(frames, filename='__tmp__.gif', blit=True, fps=60, **kwds):
+    fig, ax = plt.subplots()
+    ax.axis('off')
+    gif = ArtistAnimation(fig, [[ax.imshow(f)] for f in frames],
+                          blit=blit, **kwds)
+    gif.save(filename=filename, fps=fps)
 
+def makevideo(frames, filename='__tmp__.avi', fps=50, frameSize=(500, 500)):
+    print(frameSize)
+    out = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'MJPG'), fps, frameSize)
+    for frame in frames: out.write(frame)
+    out.release()
+    
 # def discretize(x, splits):
 #     """Discretize the data with the splitting points."""
 #     for i, p in enumerate(splits):

@@ -14,6 +14,7 @@ class Param(np.ndarray):
     rng = np.random.default_rng()
     grad_lim = 1e8  # magnitude limit of each element of the gradient
     kinds = dict(constant=0, variable=1, trainable=2)
+    # max_backwards = 10  # max number of backward passes in a single backprop
 
     def __new__(cls, value=None, *, size=None, mean=0, scale=None,
                 dtype=np.float, kind='trainable', name=None):
@@ -72,12 +73,11 @@ class Param(np.ndarray):
     def zero_grad(self): self._grad = 0
     
     @classmethod
-    @contextmanager
     def not_training(cls):
-        """Usage: `with Param.not_training(): ...`"""
-        cls.training = False
-        yield
-        cls.training = True
+        return set_temporarily(cls, 'training', False)
+
+    @property
+    def data(self): return np.asarray(self)
         
     def view(self, *args):
         if not args:
@@ -85,26 +85,28 @@ class Param(np.ndarray):
         else:
             return super().view(*args)
         
-    def assign(self, value):
+    def assign(self, par):
         if self.shape:
-            self[:] = value; return self
+            self[:] = par; return self
         else:
-            return Param(value, dtype=self.dtype, kind=self.kind)
-
+            return par
+            
     def backward(self):
-        def _backward(y, g_y, visited, trainables):
-            if (ctx := y._ctx) in visited or y.constant: return
-            visited.add(ctx)
+        def _backward(y, g_y):
+            if y in visited or (ctx := y._ctx) is None: return
+            visited.add(y)
             input_grads = ctx.backward(g_y)
             for x, g_x in zip(ctx.inputs, input_grads):
                 if isinstance(x, Param):
                     if x.trainable:
                         trainables.add(x)
                         x.grad += g_x
-                    _backward(x, g_x, visited, trainables)
+                    if g_x is not None and not x.constant:
+                        _backward(x, g_x)
         if not Param.training: return
         assert not self.shape, 'backprop must start from a scalar'
-        _backward(self, np.ones(self.shape), {None}, trainables := set())
+        visited, trainables = set(), set()
+        _backward(self, np.ones(self.shape))
         return trainables  # trainable parameters for optimization
     
     def copy(self):
@@ -127,20 +129,20 @@ class Param(np.ndarray):
 
 
 class FunctionMeta(ABCMeta):
-    def __init__(cls, name, bases, namespace):
-        super().__init__(name, bases, namespace)
+    def __init__(cls, name, bases, ns):
+        super().__init__(name, bases, ns)
+        if '__init__' in cls.__dict__:
+            cls._need_init = True
         if not inspect.isabstract(cls):
-            cls._cache = Cache()
-            if '__init__' in namespace: cls.partial = True
             if cls.register: registermethod(cls)
+            if hasattr(cls, 'cache'): cls._cache = Cache()
 
     def __call__(cls, *args, **kwds):
         if inspect.isabstract(cls):
             assert len(args) == 1 and not kwds
             # converts a function to a subclass of `cls`
-            f = args[0]
             bases = (cls, *cls.__bases__)
-            ns = {'apply': staticmethod(f)}
+            ns = {'apply': staticmethod(f := args[0])}
             func = type(cls)(f.__name__, bases, ns)
             return func
         fn = super().__call__(*args, **kwds)
@@ -148,6 +150,26 @@ class FunctionMeta(ABCMeta):
     
     def __repr__(cls):
         return cls.__name__
+
+class AbstractFunction(ABC, metaclass=FunctionMeta):
+    def __new__(cls, *args, **kwds):
+        fn = object.__new__(cls)
+        fn.__name__ = f"{cls.__name__}{signature_str(*args, **kwds)}"
+        return fn
+
+    @abstractmethod
+    def apply(self, *args, **kwds): NotImplemented
+
+    def update_args(self, *args, **kwds):
+        return args, kwds
+
+    def __call__(self, *args, **kwds):
+        with ProfileOp(str(self), args):  # log elapsed time
+            return self.apply(*args, **kwds)
+            
+    def __repr__(self):
+        return self.__name__
+    
     
 def registermethod(fn):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
@@ -160,37 +182,29 @@ def registermethod(fn):
         setattr(Param, f"__i{name}__", lambda self, x: self.assign(f(self, x)))
     return fn
 
-
-class AbstractFunction(ABC, metaclass=FunctionMeta):
-    def __new__(cls, *args, **kwds):
-        fn = object.__new__(cls)
-        fn.__name__ = f"{cls.__name__}{signature_str(args, kwds)}"
-        return fn
-        
-    @abstractmethod
-    def apply(self, *args, **kwds): NotImplemented
-
-    def __call__(self, *args, **kwds):
-        with ProfileOp(str(self), args):  # log elapsed time
-            return self.apply(*args, **kwds)
-            
-    def __repr__(self):
-        return self.__name__
-    
-
 def wrap_call(call):
     def wrapper(self, *args, **kwds):
-        if not self.partial or args and isinstance(args[0], np.ndarray):
-            try: args, kwds = self.update_args(*args, **kwds)
-            except: args, kwds = Function.update_args(self, *args, **kwds)
-        else:
-            self.__init__(*args, **kwds)
-            self.partial = False
-            return Function(self)
+        if self.partial:
+            partial = not array_at_first(args)
+            if not hasattr(self, '_partials'):
+                self._partials = [(), {}]
+            elif partial:
+                self.__name__ += signature_str(*args, **kwds)
+            args += self._partials[0]
+            kwds = {**self._partials[1], **kwds}
+            if partial:
+                self._partials = args, kwds
+                return self
+        obj = self if self._need_init else super(type(self), self)
+        args, kwds = obj.update_args(*args, **kwds)
+        if self._need_init:
+            with set_temporarily(self, '_need_init', False):
+                return apply(self, *args, **kwds)
         self.inputs = args
         output = call(self, *args, **kwds)
         return output
     return wrapper
+
 
 class Function(AbstractFunction):
     """ Baseclass of functions applied to Params.
@@ -202,17 +216,15 @@ class Function(AbstractFunction):
         partial: whether this function contains params to be initialized
         register: whether to register this function as a method of the Param class
     """
-    blackbox = True
-    partial = False
+    blackbox = False # True
     register = False
+    partial = False
+    _need_init = False
 
     def __new__(cls, *args, **kwds):
         fn = super().__new__(cls, *args, **kwds)
-        fn.args, fn.kwds = (), {}
-        return fn(*args, **kwds)
-    
-    def __init__(self, *args, **kwds):
-        self.args, self.kwds = args, kwds
+        if array_at_first(args): fn._need_init = False
+        return fn if fn._need_init else fn(*args, **kwds)
     
     def __call__(self, *args, **kwds):
         output = super().__call__(*args, **kwds)
@@ -221,9 +233,9 @@ class Function(AbstractFunction):
         return output
     __call__ = wrap_call(__call__)
     
-    def update_args(self, *args, **kwds):
-        binds, pars = bind_pars(self.apply, *args, *self.args, **kwds, **self.kwds)
-        return split_args_kwds(binds, pars)
+class apply(Function):
+    def apply(self, f, *args, **kwds):
+        return f(*args, **kwds)
 
 
 class Operation(Function):
@@ -237,6 +249,7 @@ class Operation(Function):
         ndim_in, ndim_out: least num of dims of input(s) and output
     """
     register = True
+    cache = True
     ndim_in, ndim_out = 0, 0
     
     def backward(self, grad_out):
@@ -251,7 +264,8 @@ class Operation(Function):
                 grad_y = np.expand_dims(grad_out, tuple(range(-xdim-ydim, -ydim)))
                 grad = np.sum(grad_y * dy_dx, axis=tuple(range(-ydim, 0)))
                 yield self.debroadcast(x, xdim, grad)
-            else: yield None
+            else:
+                yield None
 
     def debroadcast(self, input, ndim_in, grad):
         def split_tail(l, k):
@@ -270,10 +284,21 @@ class Operation(Function):
         # debroadcast - sum over the broadcasted axes
         if bc_axes: grad = np.sum(grad, axis=tuple(bc_axes))
         return grad.reshape(np.shape(input))
+    
+    @classmethod
+    def manage_cache(cls, key, func, args, kwds):
+        if cls.cache:
+            if key in (cache := cls._cache):
+                return 0, cache[key]
+            else:
+                return 1, func(*args, **kwds), cache
+        else:
+            return 2, func(*args, **kwds)
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
-        binds, _ = bind_pars(self.apply, *args, **kwds)
+        binds = bind_pars(self.apply, *args, **kwds)
+        
         try:
             p0 = next(p for p in binds.values() if isinstance(p, Param))
             dtype = p0.dtype
@@ -282,25 +307,23 @@ class Operation(Function):
 
         kind = 'variable' if any(isinstance(p, Param) and not p.constant
                                  for p in args) else 'constant'
-        key = tuple((k, id(v)) for k, v in binds.items())
-        cache = type(self)._cache
         
         def param2array(x): return np.asarray(x) if isinstance(x, Param) else x
         args = [param2array(arg) for arg in args]
         kwds = {key: param2array(val) for key, val in kwds.items()}
-        
-        binds, _ = bind_pars(self.apply, *args, **kwds)
-        for name, val in binds.items(): setattr(self, '_'+name, val)
 
-        if key in cache:
-            output, other = cache[key]
+        for name, val in bind_pars(self.apply, *args, **kwds).items():
+            setattr(self, '_'+name, val)  # store inputs for backward
+
+        key = tuple((k, id(v)) for k, v in binds.items())
+        ret = self.manage_cache(key, super(Function, self).__call__, args, kwds)
+        if ret[0] == 0:  # inputs in cache
+            output, other = ret[1]
             output = output.view()
             self.__dict__.update(other.__dict__)
         else:
-            with ProfileOp(str(self), args):  # compute and track the time cost
-                output = self.apply(*args, **kwds)
-            output = Param(output, dtype=dtype, kind=kind)
-            cache[key] = output, self
+            output = Param(ret[1], dtype=dtype, kind=kind)
+            if ret[0] == 1: ret[2][key] = output, self  # save to cache
             
         output._ctx = self  # set the output as the child of the context in the computation graph
         return output

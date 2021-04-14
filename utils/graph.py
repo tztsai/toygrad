@@ -1,18 +1,21 @@
 import graphviz as gv
 import numpy as np
 import random
+import numbers
 from core import Function, Param
 
 
-LETTERS = tuple(map(chr, range(97, 123)))  # lowercase alphabet
 NODES, LABELS = {}, set()  # {id: (node, label)}, {label}
 
 def nodelabel(node):
+    if not isinstance(node, np.ndarray):
+        if isinstance(node, Function) and not node._need_init:
+            return str(type(node))
+        return str(node)
     nid = id(node)
     if nid not in NODES:
         if isinstance(node, Param) and node.size > 1:
-            try: a = node.name
-            except: a = random.choice(LETTERS)
+            a = node.name
             while a in LABELS:
                 a += random.choice('1234567890')
             LABELS.add(a)
@@ -21,15 +24,16 @@ def nodelabel(node):
             try:
                 lb = '%.2e' % float(node)
             except:
-                lb = str(type(node)) if isinstance(node, Function) else str(node)
+                lb = str(node)
         NODES[nid] = (node, lb)
-    else: lb = NODES[nid][1]
+    else:
+        lb = NODES[nid][1]
     return lb
-    
-def dot_graph(graph):    
+
+def dot_graph(graph):
     def add_edges(graph):
         def add_node(n):
-            nid = hex(id(n))
+            nid = str(random.random()) if isinstance(n, numbers.Number) else hex(id(n))
             shape = 'box' if np.shape(n) else 'oval'
             g.node(nid, nodelabel(n), shape=shape)
             return nid
