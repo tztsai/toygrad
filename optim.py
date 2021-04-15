@@ -20,7 +20,8 @@ class Optimizer(AbstractFunction):
                 info('Warning: %s is not a Param, skip optimization', param)
             elif not param.grad_zero:
                 param += self.delta(param)
-                if self.reg: param += self.reg_term(param)
+                if self.reg:  # note that the reg_term is added to param
+                    param += self.reg_term(param)
                 param.zero_grad()
 
     @abstractmethod

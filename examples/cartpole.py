@@ -21,7 +21,6 @@ class Agent(Model):
             loss = loss_func(memo, self(obs))
             optim(loss.backward())
 
-    
 class Memory(dict):
     replay_buffer_size = 2
     
