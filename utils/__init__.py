@@ -80,8 +80,7 @@ def setparnames(**bindings):
 def makegif(frames, filename='__tmp__.gif', blit=True, fps=60, **kwds):
     fig, ax = plt.subplots()
     ax.axis('off')
-    gif = ArtistAnimation(fig, [[ax.imshow(f)] for f in frames],
-                          blit=blit, **kwds)
+    gif = ArtistAnimation(fig, [[ax.imshow(f)] for f in frames], blit=blit, **kwds)
     gif.save(filename=filename, fps=fps)
 
 def makevideo(frames, filename='__tmp__.avi', fps=50, frameSize=(500, 500)):
