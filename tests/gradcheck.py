@@ -34,10 +34,6 @@ k = Param(size=[4, 3, 3, 3])
 fc = Param(size=[2304, 10])
 L = Affine(5); L(x)
 C = Conv2D(4, 3, stride=2); C(im)
-model = Compose(
-    Affine(24), tanh, dropout(0.4, fixed=1),
-    Affine(5), softmax
-); model(x)
 w4 = Param(size=[3, 24])
 a = np.random.randint(5, size=50)
 oha = onehot(a, 5).astype(bool)
@@ -48,9 +44,29 @@ def loss1(y):
 def loss2(y):
     return -y[oha].log().mean()
 
+def fixed_dropout(dropout):
+    mask = None
+    def apply(x):
+        nonlocal mask
+        if mask is None:
+            ret = dropout(x)
+            mask = ret._ctx.deriv
+        else:
+            ret = dropout(x, mask=mask)
+        return ret
+    return apply
+
+drop = fixed_dropout(dropout())
+
+model = Compose(
+    Affine(24), tanh, fixed_dropout(dropout(0.4)),
+    Affine(5), softmax
+); model(x)
+
 
 for line in '''
-w4: [setattr(model[0], 'w', w4), loss1(model(x))][1]
+w: (drop(w) + drop(w*2)).sum()
+w4: [setattr(model[0], 'w', w4), loss1(model(x) + model(2*x))][1]
 w4: [setattr(model[0], 'w', w4), loss2(model(x))][1]
 w: w.softmax().log().mean()
 w2: w2.concat(w3).tanh().sum()

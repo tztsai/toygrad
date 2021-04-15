@@ -14,7 +14,7 @@ There can be 3 ways to apply a function or operation:
 """
 import numpy as np
 from core import Param, Function, Operation, registermethod
-from utils.dev import ensure_seq, abstractmethod, ABC
+from utils.dev import ensure_list, abstractmethod, ABC
 
 
 class UnaryOp(Operation):
@@ -55,13 +55,13 @@ class ReLU(UnaryOp):
 class dropout(UnaryOp):
     partial = True
     cache = False
-    def apply(self, x, p=0.5, fixed=False):
+    def apply(self, x, p=0.5, mask=None):
         if not Param.training: return x
-        if not fixed or not hasattr(self, 'mask'):
+        if mask is None:
             sample = np.random.rand(*np.shape(x))
-            self.mask = (sample < 1-p) / (1-p)
-        self.deriv = self.mask
-        return self.mask * x
+            mask = (sample < 1-p) / (1-p)
+        self.deriv = mask
+        return mask * x
 
 
 class BinaryOp(Operation):
@@ -173,7 +173,7 @@ class concat(Operation):
 
 def apply_to_axes(f):
     def wrapper(self, x, axis=None, keepdims=False, out=None):
-        axes = range(np.ndim(x)) if axis is None else ensure_seq(axis)
+        axes = range(np.ndim(x)) if axis is None else ensure_list(axis)
         for i, a in enumerate(axes):
             if a < 0: axes[i] = x.ndim + a
         return f(self, x, tuple(axes), keepdims)
@@ -268,6 +268,7 @@ class MaxPool2D(Pool2D):
 
 class Conv2D(Operation):
     def __init__(self, c_out, size, stride=1, groups=1, batchnorm=True):
+        super().__init__()
         if type(size) is int: size = (size, size)
         self.c_in, self.c_out = None, c_out
         self.size, self.stride, self.groups, self.bn = size, stride, groups, batchnorm
@@ -348,6 +349,7 @@ class Conv2D(Operation):
 
 class Affine(Function):
     def __init__(self, d_out, with_bias=True):
+        super().__init__()
         self.d_out = d_out
         self.with_bias = with_bias
         self.built = False
@@ -371,6 +373,7 @@ class BatchNorm2D(Function):
     track_running_stats = False
     
     def __init__(self):
+        super().__init__()
         self.num_batches_tracked = 0
         self.built = False
     

@@ -1,6 +1,7 @@
 import os, time, sys
 import logging
 import atexit
+import copy
 import inspect
 import itertools
 import numpy as np
@@ -73,8 +74,8 @@ warn = logger.warning
 def setloglevel(level):
     logger.setLevel(level)
 
-def ensure_seq(a):
-    return [a] if type(a) not in [list, tuple] else a
+def ensure_list(a):
+    return [a] if type(a) not in [list, tuple] else list(a)
 
 def pbar(iterable, unit=' batches', **kwds):
     """A process bar."""
@@ -98,8 +99,8 @@ def backward_stack():
     stk = inspect.stack()
     return [f.frame.f_locals['ctx'] for f in stk if f.function == '_backward']
 
-def copyclass(cls):
-    return type(cls)(cls.__name__, cls.__bases__, dict(cls.__dict__))
+# def copyclass(cls):
+#     return type(cls)(cls.__name__, cls.__bases__, dict(cls.__dict__))
 
 @contextmanager
 def set_temporarily(obj, attr, val):

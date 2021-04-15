@@ -145,8 +145,6 @@ class Param(np.ndarray):
 class FunctionMeta(ABCMeta):
     def __init__(cls, name, bases, ns):
         super().__init__(name, bases, ns)
-        if '__init__' in cls.__dict__:
-            cls._need_init = True
         if not inspect.isabstract(cls):
             if cls.register: registermethod(cls)
             if hasattr(cls, 'cache'): cls._cache = Cache()
@@ -176,7 +174,7 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
 
     def update_args(self, *args, **kwds):
         return args, kwds
-
+        
     def __call__(self, *args, **kwds):
         with ProfileOp(str(self), args):  # log elapsed time
             return self.apply(*args, **kwds)
@@ -198,22 +196,8 @@ def registermethod(fn):
 
 def wrap_call(call):
     def wrapper(self, *args, **kwds):
-        if self.partial:
-            partial = not array_at_first(args)
-            if not hasattr(self, '_partials'):
-                self._partials = [(), {}]
-            elif partial:
-                self.__name__ += signature_str(*args, **kwds)
-            args += self._partials[0]
-            kwds = {**self._partials[1], **kwds}
-            if partial:
-                self._partials = args, kwds
-                return self
-        obj = self if self._need_init else super(type(self), self)
-        args, kwds = obj.update_args(*args, **kwds)
-        if self._need_init:
-            with set_temporarily(self, '_need_init', False):
-                return apply(self, *args, **kwds)
+        if self.wait_inputs:
+            return self.context(*args, **kwds)
         self.inputs = args
         output = call(self, *args, **kwds)
         return output
@@ -230,15 +214,36 @@ class Function(AbstractFunction):
         partial: whether this function contains params to be initialized
         register: whether to register this function as a method of the Param class
     """
-    blackbox = False # True
+    blackbox = True
     register = False
     partial = False
-    _need_init = False
 
     def __new__(cls, *args, **kwds):
         fn = super().__new__(cls, *args, **kwds)
-        if array_at_first(args): fn._need_init = False
-        return fn if fn._need_init else fn(*args, **kwds)
+        fn.need_init = '__init__' in cls.__dict__
+        return fn.decide_call(*args, **kwds)
+        
+    def decide_call(self, *args, **kwds):
+        self.wait_inputs = ((self.partial or self.need_init) and
+                            not array_at_first(args))
+        return self if self.wait_inputs else self(*args, **kwds)
+    
+    def __init__(self, *args, **kwds):
+        self.args, self.kwds = args, kwds
+        self.need_init = False
+    
+    def context(self, *args, **kwds):
+        ctx = object.__new__(type(self))
+        new_args, new_kwds = self.update_args(*args, **kwds)
+        ctx.__dict__.update(self.__dict__)
+        ctx.__name__ = self.__name__ + signature_str(*args, **kwds)
+        Function.__init__(ctx, *new_args, **new_kwds)
+        return ctx.decide_call(*new_args, **new_kwds)
+
+    def update_args(self, *args, **kwds):
+        args += self.args
+        kwds = {**self.kwds, **kwds}
+        return super().update_args(*args, **kwds)
     
     def __call__(self, *args, **kwds):
         output = super().__call__(*args, **kwds)
@@ -273,8 +278,8 @@ class Operation(Function):
         """
         for i, x in enumerate(self.inputs):
             if isinstance(x, Param) and not x.constant:  # ∂e/∂x_i = Σ_j (∂e/∂y_j * ∂y_j/∂x_i)
-                xdim, ydim = ensure_seq(self.ndim_in)[i], self.ndim_out
-                dy_dx = ensure_seq(self.deriv)[i]
+                xdim, ydim = ensure_list(self.ndim_in)[i], self.ndim_out
+                dy_dx = ensure_list(self.deriv)[i]
                 grad_y = np.expand_dims(grad_out, tuple(range(-xdim-ydim, -ydim)))
                 grad = np.sum(grad_y * dy_dx, axis=tuple(range(-ydim, 0)))
                 yield self.debroadcast(x, xdim, grad)
