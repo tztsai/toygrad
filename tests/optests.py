@@ -29,7 +29,7 @@ print(g(111))
     
 class F2(Function):
     def __init__(self, n):
-        super().__init__()
+        # super().__init__()
         self.w = Param(size=n)
     def apply(self, x):
         return x + self.w

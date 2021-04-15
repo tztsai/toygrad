@@ -221,6 +221,7 @@ class Function(AbstractFunction):
     def __new__(cls, *args, **kwds):
         fn = super().__new__(cls, *args, **kwds)
         fn.need_init = '__init__' in cls.__dict__
+        fn.parent = None  # a context may have a parent function
         return fn.decide_call(*args, **kwds)
         
     def decide_call(self, *args, **kwds):
@@ -234,16 +235,19 @@ class Function(AbstractFunction):
     
     def context(self, *args, **kwds):
         ctx = object.__new__(type(self))
-        new_args, new_kwds = self.update_args(*args, **kwds)
-        ctx.__dict__.update(self.__dict__)
         ctx.__name__ = self.__name__ + signature_str(*args, **kwds)
-        Function.__init__(ctx, *new_args, **new_kwds)
-        return ctx.decide_call(*new_args, **new_kwds)
+        ctx.parent = self
+        args, kwds = self.update_args(*args, **kwds)
+        Function.__init__(ctx, *args, **kwds)
+        return ctx.decide_call(*args, **kwds)
 
     def update_args(self, *args, **kwds):
         args += self.args
         kwds = {**self.kwds, **kwds}
         return super().update_args(*args, **kwds)
+    
+    def __getattr__(self, name):
+        return getattr(self.parent, name)
     
     def __call__(self, *args, **kwds):
         output = super().__call__(*args, **kwds)
@@ -252,10 +256,6 @@ class Function(AbstractFunction):
         return output
     __call__ = wrap_call(__call__)
     
-class apply(Function):
-    def apply(self, f, *args, **kwds):
-        return f(*args, **kwds)
-
 
 class Operation(Function):
     """ Baseclass of Param operations with automatic differentiation.

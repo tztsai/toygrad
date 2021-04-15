@@ -9,16 +9,16 @@ NODES, LABELS = {}, set()  # {id: (node, label)}, {label}
 
 def nodelabel(node):
     if not isinstance(node, np.ndarray):
-        if isinstance(node, Function) and not node._need_init:
-            return str(type(node))
+        if isinstance(node, Function):
+            return str(node) if node.wait_inputs else str(type(node))
         return str(node)
     nid = id(node)
     if nid not in NODES:
-        if isinstance(node, Param) and node.size > 1:
-            a = node.name
-            while a in LABELS:
-                a += random.choice('1234567890')
-            LABELS.add(a)
+        if isinstance(node, np.ndarray) and node.size > 2:
+            a = node.name if hasattr(node, 'name') else 'array'
+            # while a in LABELS:
+            #     a += random.choice('1234567890')
+            # LABELS.add(a)
             lb = '%s%s' % (a, list(np.shape(node)))
         else:
             try:
@@ -54,8 +54,16 @@ def compgraph(param):
             except: return [y]
         if ctx in visited: return [y]
         visited.add(ctx)
-        return [y, [ctx, *[dfs(x, visited) for x in ctx.inputs]]]
+        ret = [y, [ctx, *[dfs(x, visited) for x in ctx.inputs]]]
+        if ctx.parent:
+            ret[1].insert(0, ApplyNode())
+            ret[1][1] = [ctx.parent]
+        return ret
     return dfs(param)
+
+class ApplyNode:
+    def __str__(self): return 'apply'
+
 
 def show_compgraph(param, filename=None):
     dot = dot_graph(compgraph(param))

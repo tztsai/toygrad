@@ -13,6 +13,7 @@ def checkgrad(w, lossfun):
         return grad
     
     Lw = lossfun(w)
+    graph.show_compgraph(Lw)
     params = Lw.backward()
     g1, g2 = w.grad, numgrad(w)
     for p in params: p.zero_grad()
