@@ -1,5 +1,5 @@
 from core import AbstractFunction
-from op import *
+from func import *
 from optim import *
 from utils.dev import defaultdict, info, dbg, warn, pbar
 from utils import BatchLoader, setparnames, graph, pickle
@@ -85,12 +85,35 @@ class Model(AbstractFunction):
     def save(self, filename):
         with open(filename, 'wb') as f:
             pickle.dump(self, f)
+            # pickle.dump(self.state_dict(), f)
             
     @classmethod
     def load(cls, filename):
         with open(filename, 'rb') as f:
             return pickle.load(f, encoding='bytes')
+            # state_dict = pickle.load(f, encoding='bytes')
+            # for name, val in state_dict.items():
+            #     setattr(self, name, val)
         
+    # def state_dict(self):
+    #     def deepwalk(obj, visited=set()):
+    #         if isinstance(obj, AbstractFunction):
+    #             if obj in visited: return obj
+    #             visited.add(id(obj))
+    #             state = {}
+    #             for name, val in obj.__dict__.items():
+    #                 state[name] = deepwalk(val, visited)
+    #             return state
+    #         elif isinstance(obj, dict):
+    #             return {k: deepwalk(v, visited) for k, v in obj.items()}
+    #         elif isinstance(obj, (list, tuple)):
+    #             return type(obj)(deepwalk(v) for v in obj)
+    #         elif isinstance(obj, type):
+    #             return None
+    #         else:
+    #             return obj
+    #     return deepwalk(self)
+
     @staticmethod
     def getloss(obj):
         if callable(obj):
@@ -126,15 +149,15 @@ class Model(AbstractFunction):
 
 
 class Compose(Model):
-    def __init__(self, *operations):
-        self.ops = operations
+    def __init__(self, *functions):
+        self.fns = functions
         
     def __getitem__(self, i):
-        return self.ops[i]
+        return self.fns[i]
     
     def apply(self, input):
-        for op in self.ops:
-            input = output = op(input)
+        for f in self.fns:
+            input = output = f(input)
         return output
 
 

@@ -5,6 +5,6 @@ if 'tests' in os.listdir():
 sys.path.extend(['..'])
 
 from core import *
-from op import *
+from func import *
 from model import *
 from utils import *

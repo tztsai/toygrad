@@ -128,7 +128,13 @@ class Cache(dict):
     def __init__(self, size=128):
         self.size = size
         self.queue = []
+        self._cnt = 0
         
+    def __contains__(self, key):
+        ret = super().__contains__(key)    
+        if ret: self._cnt += 1
+        return ret
+    
     def __setitem__(self, key, value):
         if key not in self:
             self.queue.append(key)

@@ -1,6 +1,6 @@
 """
 Inherit from Operation to add differentiable operations (deriv or backward must be implemented).
-Functions of Params can be automatically differentiable due to these basic operations.
+Functions are automatically differentiable due to these basic operations.
 Decorate a function using `registermethod` to register it as a method of the Param class.
 
 Implementations of sum, max, reshape, transpose, Pool2D, BatchNorm2D, Conv2D, etc. have referred
@@ -39,7 +39,7 @@ class tanh(UnaryOp):
     
 class sign(UnaryOp):
     def apply(self, x):
-        self.deriv = 0
+        self.deriv = 0.
         return np.sign(x)
 
 class abs(UnaryOp):
@@ -49,8 +49,8 @@ class abs(UnaryOp):
     
 class ReLU(UnaryOp):
     def apply(self, x):
-        self.deriv = x >= 0
-        return np.maximum(x, 0)
+        self.deriv = x >= 0.
+        return np.maximum(x, 0.)
 
 class dropout(UnaryOp):
     partial = True
@@ -81,7 +81,14 @@ class Pow(BinaryOp):
     def apply(self, x, y):
         self.deriv = y * x**(y-1), None #x**y * np.log(x)
         return x ** y
-    
+
+class maximum(BinaryOp):
+    def apply(self, x, y):
+        out = np.maximum(x, y)
+        tx = (x == out).astype(float)
+        self.deriv = tx, 1. - tx
+        return out
+        
 
 class softmax(Operation):
     ndim_in, ndim_out = 1, 1
@@ -145,8 +152,8 @@ class getitem(Operation):
         yield grad_x
         
 class concat(Operation):
+    """Horizontally concat two arrays together."""
     def apply(self, x, y):
-        """Horizontally concat two arrays together."""
         self._ax = 1 if np.ndim(x) > 1 else 0
         self._i = x.shape[self._ax]
         return np.hstack([x, y])
@@ -154,23 +161,6 @@ class concat(Operation):
     def backward(self, grad_out):
         return np.split(grad_out, [self._i], axis=self._ax)
         
-# class Slice(Operation):
-    # def apply(self, x, arg=None):
-    #     return self._slice(x, arg)
-
-    # def backward(self, grad_y):
-    #     yield self._slice(grad_y, [(-p[0], grad_y.shape[i] + (self._x.shape[i]-p[1]))
-    #                                for i, p in enumerate(self._arg)])
-        
-    # @staticmethod
-    # def _slice(x, arg):
-    #     padding = [(np.max(0, -p[0]), np.max(0, p[1]-x.shape[i]))
-    #                for i, p in enumerate(arg)]
-    #     x = np.pad(x, padding)
-    #     slicee = [(p[0] + padding[i][0], p[1] + padding[i][0])
-    #               for i, p in enumerate(arg)]
-    #     return x[[slice(x[0], x[1]) for x in slicee]]
-
 def apply_to_axes(f):
     def wrapper(self, x, axis=None, keepdims=False, out=None):
         axes = range(np.ndim(x)) if axis is None else ensure_list(axis)
@@ -182,12 +172,11 @@ def apply_to_axes(f):
 class sum(Operation):
     @apply_to_axes
     def apply(self, x, axes, keepdims=False):
-        shape = [1 if i in axes else s for i, s in enumerate(np.shape(x))]
-        self._shape = shape
+        self._sh = [1 if i in axes else s for i, s in enumerate(np.shape(x))]
         return np.sum(x, axis=axes, keepdims=keepdims)
     
     def backward(self, grad_y):
-        yield grad_y.reshape(self._shape) + np.zeros_like(self._x)
+        yield grad_y.reshape(self._sh) + np.zeros_like(self._x)
 
 class max(Operation):
     @apply_to_axes
@@ -221,22 +210,43 @@ def sqrt(x): return x ** 0.5
 def sigmoid(x): return exp(x) / (1 + exp(x))
 
 @registermethod
-def mean(x, axis=None):
-    s = sum(x, axis=axis)
-    return s * np.prod(s.shape) / np.prod(np.shape(x))
+def swish(x): return x * sigmoid(x)
 
 @registermethod
-def mse(x, y, axis=None):
-    return ((x - y) ** 2).mean(axis=axis)
-        
+def leakyReLU(x, neg_slope=0.01):
+    return ReLU(x) - ReLU(neg_slope * -x)
+
 @registermethod
 def crossentropy(x, y, axis=-1, avg=True):
     e = (y * -log(x)).sum(axis=axis)
     return e.mean() if avg else e
 
 @registermethod
+def mean(x, axis=None, keepdims=False):
+    s = sum(x, axis=axis, keepdims=keepdims)
+    return s * np.prod(np.shape(s)) / np.prod(np.shape(x))
+
+@registermethod
+def mse(x, y, axis=None, keepdims=False):
+    return mean((x - y) ** 2, axis, keepdims)
+
+@registermethod
+def var(x, axis=None, keepdims=False):
+    return mse(x, mean(x, axis, keepdims=True), axis, keepdims)
+
+@registermethod
+def std(x, axis=None, keepdims=False):
+    return sqrt(var(x, axis, keepdims))
+
+@registermethod
 def flatten(x):
-    return x.reshape(shape=[len(x), -1])
+    return reshape(x, [len(x), -1])
+
+@registermethod
+def normalize(x, axis=0):
+    mu = mean(x, axis, keepdims=True)
+    sigma = std(x, axis, keepdims=True)
+    return (x - mu) / maximum(sigma, 1e-6)
 
 
 ### other functions ###
@@ -251,11 +261,12 @@ class Pool2D(Function):
     @staticmethod
     def pool2d(im, py, px, st=1):
         (dy, ry), (dx, rx) = divmod(im.shape[-2], py*st), divmod(im.shape[-1], px*st)
-        xup = im[:, :, :im.shape[-2]-ry:st, :im.shape[-1]-rx:st]
-        return xup.reshape(shape=(*im.shape[:-2], dy, py, dx, px))
+        pools = im[:, :, :im.shape[-2]-ry:st, :im.shape[-1]-rx:st]
+        return pools.reshape(shape=(*im.shape[:-2], dy, py, dx, px))
     
     @staticmethod
-    def reduce(pools, axis): raise NotImplementedError
+    def reduce(pools, axis):
+        raise NotImplementedError
 
 class MeanPool2D(Pool2D):
     reduce = mean
@@ -267,7 +278,7 @@ class MaxPool2D(Pool2D):
 ### operations or methods containing parameters to be initialized ###
 
 class Conv2D(Operation):
-    def __init__(self, c_out, size, stride=1, groups=1, batchnorm=True):
+    def __init__(self, c_out, size, stride=1, groups=1, batchnorm=False):
         super().__init__()
         if type(size) is int: size = (size, size)
         self.c_in, self.c_out = None, c_out
@@ -297,9 +308,9 @@ class Conv2D(Operation):
         x, w = input, filters
         cout, cin, H, W = w.shape
         ys, xs = stride
-        bs, cin_ = x.shape[0], x.shape[1]
+        bs = len(x)
         oy, ox = (x.shape[2]-(H-ys))//ys, (x.shape[3]-(W-xs))//xs
-        assert cin * groups == cin_
+        assert cin * groups == x.shape[1]
         assert cout % groups == 0
         rcout = cout // groups
 

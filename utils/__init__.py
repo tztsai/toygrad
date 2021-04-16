@@ -2,6 +2,7 @@ import functools
 import inspect
 import pickle
 import random
+import itertools
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,16 +12,17 @@ from .dev import DefaultNone, pbar
 
 
 def onehot(x, k, *, cold=0, hot=1):
-    m = np.full((len(x), k), cold, dtype=np.int)
-    for i, j in enumerate(x):
-        m[i, j] = hot
+    m = np.full((*x.shape, k), cold, dtype=np.int)
+    for idx in itertools.product(*map(range, x.shape)):
+        m[idx][x[idx]] = hot
     return m
 
 def standardize(x_tr, *x_ts):
     m = x_tr.mean(axis=0)
     sd = x_tr.std(axis=0)
-    nxs = [(x-m)/sd for x in (x_tr, *x_ts)]
-    return nxs[0] if not x_ts else nxs
+    if np.isclose(sd, 0): sd = 1.
+    xs = [(x-m)/sd for x in (x_tr, *x_ts)]
+    return xs[0] if not x_ts else xs
 
 def train_val_split(inputs, labels, ratio=0.8):
     N = len(inputs)

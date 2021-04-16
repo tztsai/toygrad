@@ -15,8 +15,8 @@ class Param(np.ndarray):
     grad_lim = 1e8  # magnitude limit of each element of the gradient
     kinds = dict(constant=0, variable=1, trainable=2)
 
-    def __new__(cls, value=None, *, size=None, mean=0, scale=None,
-                dtype=np.float, kind='trainable', name=None):
+    def __new__(cls, value=None, *, size=None, dtype=np.float, mean=0, scale='he',
+                kind='trainable', name=None):
         """
         If `value` is given, then it will be converted to a Param.
         If `dtype` is the same as that of the given `value`, then a view of
@@ -25,8 +25,9 @@ class Param(np.ndarray):
         of this size will be created filled with the given `value`.
         
         If `value` is not given, a random Param following normal
-        distribution will be generated. Additionally, `mean` and `scale`
-        of the distribution can be specified.
+        distribution will be generated. `mean` and `scale` of the distribution
+        can be specified, but if `scale` is not provided, initialization methods
+        like 'he' or 'xavier' will be used to compute the scale.
         
         >>> Param([[1,2,3],[4,5,6]])
         >>> Param(size=[4, 4], dtype=np.float32, scale=1)
@@ -35,16 +36,23 @@ class Param(np.ndarray):
         >>> w is Param(w)
         """
         if value is None:  # random initialization
-            if size is None:
-                size = 1
-            if scale is None:
-                length = size[0] if hasattr(size, '__len__') else size
-                scale = 1 / np.sqrt(length)  # Xavier initialization
+            if size is None: size = 1
+            if type(scale) is str:
+                d_in = size[0] if hasattr(size, '__len__') else size
+                scale = Param.init_scale(d_in, scale)
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
         else:
             if size is not None:  # fill an array of the given size
                 value = np.full(size, value, dtype=dtype)
         return np.asarray(value, dtype=dtype).view(cls)
+    
+    @staticmethod
+    def init_scale(d_in, method):
+        if method == 'he':
+            return np.sqrt(2/d_in)
+        if method == 'xavier':
+            return np.sqrt(1/d_in)
+        raise NotImplementedError
     
     def __array_finalize__(self, obj):
         if not isinstance(obj, Param) or not hasattr(self, 'name'):
@@ -62,13 +70,12 @@ class Param(np.ndarray):
 
     @grad.setter
     def grad(self, grad):
-        if not self.trainable or not self.training:
-            info('Caution: skipped setting grad'); return
-        elif np.ndim(grad) == 0:  # a scalar
-            grad = np.full(self.shape, grad)
-        elif np.shape(grad) != self.shape:
-            raise ValueError('gradient shape mismatch')
-        self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
+        if self.trainable and self.training:
+            if np.ndim(grad) == 0:  # a scalar
+                grad = np.full(self.shape, grad)
+            elif np.shape(grad) != self.shape:
+                raise ValueError('gradient shape mismatch')
+            self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
         
     @property
     def grad_zero(self): return id(self.grad) == id(0)
@@ -76,8 +83,10 @@ class Param(np.ndarray):
     def zero_grad(self): self._grad = 0
     
     @classmethod
+    @contextmanager
     def not_training(cls):
-        return set_temporarily(cls, 'training', False)
+        """Use `with Param.not_training(): ...` to temporarily disable training."""
+        cls.training = False; yield; cls.training = False
 
     @property
     def data(self): return np.asarray(self)
@@ -146,8 +155,11 @@ class FunctionMeta(ABCMeta):
     def __init__(cls, name, bases, ns):
         super().__init__(name, bases, ns)
         if not inspect.isabstract(cls):
-            if cls.register: registermethod(cls)
-            if hasattr(cls, 'cache'): cls._cache = Cache()
+            if cls.register:
+                registermethod(cls)
+            if hasattr(cls, 'cache') and cls.cache:
+                cls._cache = Cache()
+                atexit.register(cls.log_cache_hits)
 
     def __call__(cls, *args, **kwds):
         if inspect.isabstract(cls):
@@ -155,13 +167,17 @@ class FunctionMeta(ABCMeta):
             # converts a function to a subclass of `cls`
             bases = (cls, *cls.__bases__)
             ns = {'apply': staticmethod(f := args[0])}
-            func = type(cls)(f.__name__, bases, ns)
+            func = FunctionMeta(f.__name__, bases, ns)
+            func.__module__ = f.__module__  # for pickle to lookup attributes?
             return func
         fn = super().__call__(*args, **kwds)
         return fn
-    
+        
     def __repr__(cls):
         return cls.__name__
+    
+    def __reduce__(self):
+        return super().__reduce__()
 
 class AbstractFunction(ABC, metaclass=FunctionMeta):
     def __new__(cls, *args, **kwds):
@@ -178,7 +194,7 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
     def __call__(self, *args, **kwds):
         with ProfileOp(str(self), args):  # log elapsed time
             return self.apply(*args, **kwds)
-            
+        
     def __repr__(self):
         return self.__name__
     
@@ -313,6 +329,10 @@ class Operation(Function):
                 return 1, func(*args, **kwds), cache
         else:
             return 2, func(*args, **kwds)
+        
+    @classmethod
+    def log_cache_hits(cls):
+        dbg('%d cache hits of %s', cls._cache._cnt, cls)
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""

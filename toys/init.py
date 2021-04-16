@@ -2,9 +2,9 @@ import sys, os
 
 if 'examples' in os.listdir():
     os.chdir('examples')
-sys.path.extend(['..'])
+sys.path.extend(['.', '..'])
 
 from core import *
-from op import *
+from func import *
 from model import *
 from utils import *
