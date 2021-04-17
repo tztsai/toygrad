@@ -8,3 +8,5 @@ from core import *
 from func import *
 from model import *
 from utils import *
+
+setloglevel('INFO')

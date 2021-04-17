@@ -68,12 +68,19 @@ if __name__ == '__main__':
         Affine(24), tanh, fixed_dropout(0.4),
         Affine(5), softmax
     ); model(x)
+
+    model2 = Compose(
+        Affine(24), leakyReLU,
+        Affine(16), leakyReLU,
+        Affine(5), softmax
+    ); model2(x)
     
     fixed_dropout = fixed_dropout()
 
     for line in '''
     w: ((x @ w).exp() / (1 + (x @ w).exp())).sum()
     w: (x @ w).sigmoid().sum()
+    w: (x @ w).leakyrelu().sum()
     w: (x @ w).max(axis=1).sum()
     w: (w.maximum(w2[:3])).mean()
     w2: (w * w.maximum(w2[:3])).mean()
@@ -81,6 +88,7 @@ if __name__ == '__main__':
     w: (fixed_dropout(w) + fixed_dropout(w*2)).sum()
     w4: [setattr(model[0], 'w', w4), loss1(model(x) + model(2*x))][1]
     w4: [setattr(model[0], 'w', w4), loss2(model(x))][1]
+    w4: [setattr(model2[0], 'w', w4), loss1(model2(x) * model2(2*x))][1]
     w: w.softmax().log().mean()
     w2: w2.concat(w3).tanh().sum()
     w3: w2.concat(w3).tanh().sum()

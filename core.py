@@ -12,7 +12,7 @@ class Param(np.ndarray):
     """
     training = True
     rng = np.random.default_rng()
-    grad_lim = 1e8  # magnitude limit of each element of the gradient
+    grad_lim = 100.  # magnitude limit of each element of the gradient
     kinds = dict(constant=0, variable=1, trainable=2)
 
     def __new__(cls, value=None, *, size=None, dtype=np.float, mean=0, scale='he',
@@ -88,7 +88,7 @@ class Param(np.ndarray):
     @contextmanager
     def not_training(cls):
         """Use `with Param.not_training(): ...` to temporarily disable training."""
-        cls.training = False; yield; cls.training = False
+        cls.training = False; yield; cls.training = True
 
     @property
     def data(self): return np.asarray(self)

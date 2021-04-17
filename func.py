@@ -56,10 +56,12 @@ class dropout(UnaryOp):
     partial = True
     cache = False
     def apply(self, x, p=0.5, mask=None):
-        if not Param.training: return x
+        if not Param.training:
+            self.deriv = 1
+            return x
         if mask is None:
             sample = np.random.rand(*np.shape(x))
-            mask = (sample < 1-p) / (1-p)
+            mask = (sample < 1 - p) / (1 - p)
         self.deriv = mask
         return mask * x
 

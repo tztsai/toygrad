@@ -46,14 +46,14 @@ def dot_graph(graph):
     return g
 
 def compgraph(param):
-    def search(y, visited=set()):
+    def search(y, visited={None}):
         try:
             ctx = y._outer_ctx
         except:
             try: ctx = y._ctx
             except: return [y]
-        if y in visited: return [y]
-        visited.add(y)
+        if ctx in visited: return [y]
+        visited.add(ctx)
         ret = [y, [ctx, *[search(x, visited) for x in ctx.inputs]]]
         if ctx.parent:
             ret[1].insert(0, ApplyNode())

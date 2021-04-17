@@ -81,7 +81,7 @@ def ensure_list(a):
 
 def pbar(iterable, unit=' batches', **kwds):
     """A process bar."""
-    if logger.level > logLevel: return iterable
+    if logger.level > logging.INFO: return iterable
     return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)
     
 def signature_str(*args, **kwds):

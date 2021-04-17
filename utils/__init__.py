@@ -8,7 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import ArtistAnimation
 from collections import defaultdict
-from .dev import DefaultNone, pbar
+from .dev import DefaultNone, pbar, setloglevel
 
 
 def onehot(x, k, *, cold=0, hot=1):
