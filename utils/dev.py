@@ -1,10 +1,12 @@
 import os, time, sys
 import logging
 import atexit
+import random
 import copy
 import inspect
 import itertools
 import numpy as np
+from queue import Queue
 from contextlib import contextmanager
 from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
@@ -25,8 +27,8 @@ class ProfileOp:
             dbg(f"{name:>20} : {cls.debug_counts[name]:>6} "
                 f"{cls.debug_times[name]:>10.2f} ms")
     
-    def __init__(self, name, x, backward=False):
-        self.name, self.x = f"back_{name}" if backward else name, x
+    def __init__(self, ctx, backward=False):
+        self.name = f"back_{ctx}" if backward else str(ctx)
 
     def __enter__(self):
         self.st = time.time()
@@ -35,7 +37,7 @@ class ProfileOp:
         et = (time.time()-self.st)*1000.
         self.debug_counts[self.name] += 1
         self.debug_times[self.name] += et
-        dbg(f"{self.name:>20} : {et:>7.2f} ms {[np.shape(y) for y in self.x]}")
+        dbg(f"{self.name:>20} : {et:>7.2f} ms")
 
 atexit.register(ProfileOp.print_debug_exit)
 
@@ -56,7 +58,7 @@ class LogFormatter(logging.Formatter):
         record.msg = record.msg % record.args
         return fmt % dct
 
-logLevel = logging.INFO
+logLevel = logging.DEBUG
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logLevel)

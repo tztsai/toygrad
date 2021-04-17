@@ -63,24 +63,26 @@ class Param(np.ndarray):
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
         self._ctx = None
-        self._grad = 0 if self.trainable else None
+        self._grad = 0 if not self.constant else None
 
     @property
     def grad(self): return self._grad
 
     @grad.setter
     def grad(self, grad):
-        if self.trainable and self.training:
-            if np.ndim(grad) == 0:  # a scalar
-                grad = np.full(self.shape, grad)
-            elif np.shape(grad) != self.shape:
-                raise ValueError('gradient shape mismatch')
-            self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
+        if self.constant or not Param.training: return
+        if np.ndim(grad) == 0:  # a scalar
+            grad = np.full(self.shape, grad)
+        elif np.shape(grad) != self.shape:
+            raise ValueError('gradient shape mismatch')
+        self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
         
     @property
-    def grad_zero(self): return id(self.grad) == id(0)
+    def grad_clean(self):
+        return self.constant or id(self.grad) == id(0)
 
-    def zero_grad(self): self._grad = 0
+    def zero_grad(self):
+        if not self.constant: self._grad = 0
     
     @classmethod
     @contextmanager
@@ -102,24 +104,41 @@ class Param(np.ndarray):
             self[:] = par; return self
         else:
             return par
-            
+        
     def backward(self):
-        def _backward(y, g_y):
-            if y in visited or (ctx := y._ctx) is None: return
-            visited.add(y)
-            input_grads = ctx.backward(g_y)
-            for x, g_x in zip(ctx.inputs, input_grads):
-                if isinstance(x, Param):
-                    if x.trainable:
-                        trainables.add(x)
-                        x.grad += g_x
-                    if g_x is not None and not x.constant:
-                        _backward(x, g_x)
         if not Param.training: return
-        assert not self.shape, 'backprop must start from a scalar'
-        visited, trainables = set(), set()
-        _backward(self, np.ones(self.shape))
-        return trainables  # trainable parameters for optimization
+        assert not self.constant and self.ndim == 0, 'backprop must start from a scalar variable'
+        
+        visited, params = set(), []
+        def deepwalk(param):
+            visited.add(param)
+            if param._ctx:
+                [deepwalk(p) for p in param._ctx.inputs if isinstance(p, Param)
+                 and not p.constant and p not in visited]
+            params.append(param)
+            
+        deepwalk(self)
+        self.grad = np.ones(self.shape)
+        for y in reversed(params):
+            if (ctx := y._ctx) is None: continue
+            assert not y.grad_clean
+            with ProfileOp(ctx, backward=True):
+                x_grads = ctx.backward(y.grad)
+            for x, g in zip(ctx.inputs, x_grads):
+                if isinstance(x, Param) and not x.constant:
+                    x.grad += g
+        # queue, params = Queue(), set()  # use breadth-first-search since grads may accumulate
+        # queue.put(self)
+        # while not queue.empty():
+        #     y = queue.get()
+        #     params.add(y)
+        #     if (ctx := y._ctx) is None: continue
+        #     input_grads = ctx.backward(y.grad)
+        #     for x, g_x in zip(ctx.inputs, input_grads):
+        #         if isinstance(x, Param) and not x.constant:
+        #             x.grad += g_x
+        #             if x not in params: queue.put(x)
+        return params  # return visited parameters for optimization
     
     def copy(self):
         cp = Param(super().copy(), dtype=self.dtype)
@@ -192,7 +211,7 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
         return args, kwds
         
     def __call__(self, *args, **kwds):
-        with ProfileOp(str(self), args):  # log elapsed time
+        with ProfileOp(self):  # log elapsed time
             return self.apply(*args, **kwds)
         
     def __repr__(self):
@@ -230,7 +249,7 @@ class Function(AbstractFunction):
         partial: whether this function contains params to be initialized
         register: whether to register this function as a method of the Param class
     """
-    blackbox = True
+    blackbox = False
     register = False
     partial = False
 
@@ -344,10 +363,13 @@ class Operation(Function):
         except StopIteration:  # no Params in the arguments
             return self.apply(*args, **kwds)
 
-        kind = 'variable' if any(isinstance(p, Param) and not p.constant
-                                 for p in args) else 'constant'
-        
-        def param2array(x): return np.asarray(x) if isinstance(x, Param) else x
+        kind = 'constant'  # parameter type of the output
+        def param2array(x):
+            nonlocal kind
+            if isinstance(x, Param):
+                if not x.constant: kind = 'variable'
+                return np.asarray(x)
+            return x
         args = [param2array(arg) for arg in args]
         kwds = {key: param2array(val) for key, val in kwds.items()}
 

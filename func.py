@@ -14,7 +14,7 @@ There can be 3 ways to apply a function or operation:
 """
 import numpy as np
 from core import Param, Function, Operation, registermethod
-from utils.dev import ensure_list, abstractmethod, ABC
+from utils.dev import ensure_list, abstractmethod, ABC, random
 
 
 class UnaryOp(Operation):
@@ -76,10 +76,18 @@ class Mul(BinaryOp):
     def apply(self, x, y):
         self.deriv = y, x
         return x * y
+    
+class TrueDiv(BinaryOp):
+    def apply(self, x, y):
+        self.deriv = 1/y, -x/y**2
+        return x / y
 
 class Pow(BinaryOp):
     def apply(self, x, y):
-        self.deriv = y * x**(y-1), None #x**y * np.log(x)
+        if isinstance(y, Param) and not y.constant:
+            self.deriv = y * x**(y-1), x**y * np.log(x)
+        else:
+            self.deriv = y * x**(y-1), None
         return x ** y
 
 class maximum(BinaryOp):
@@ -104,7 +112,9 @@ class smce(Operation):
     """Softmax Crossentropy"""
     ndim_in, ndim_out = (1, 1), 0
     def apply(self, x, y):
-        """Note that this can only be applied when the sum of each of the rows of `y` is 1."""
+        if isinstance(y, Param): assert y.constant
+        ids = random.sample(range(len(y)), min(10, len(y)))
+        assert all(np.sum(y[ids], axis=1) == 1.)
         p = (ex := np.exp(x)) / np.sum(ex, axis=-1, keepdims=True)
         e = -np.sum(y * np.log(p), axis=-1)
         self.deriv = (p - y) / e.size, None
@@ -195,13 +205,10 @@ class max(Operation):
 ### functions that are registered as Param methods ###
 
 @registermethod
-def TrueDiv(x, y): return x * (y ** -1.)
+def sub(x, y): return x + (-1. * y)
 
 @registermethod
-def Sub(x, y): return x + (-1. * y)
-
-@registermethod
-def Neg(x): return 0. - x
+def neg(x): return 0. - x
 
 @registermethod
 def sqrt(x): return x ** 0.5
@@ -250,7 +257,7 @@ def normalize(x, axis=0):
 
 
 ### other functions ###
-    
+ 
 class Pool2D(Function):
     register = True
     partial = True

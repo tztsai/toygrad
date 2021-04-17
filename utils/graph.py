@@ -46,20 +46,20 @@ def dot_graph(graph):
     return g
 
 def compgraph(param):
-    def dfs(y, visited={None}):
+    def search(y, visited=set()):
         try:
             ctx = y._outer_ctx
         except:
             try: ctx = y._ctx
             except: return [y]
-        if ctx in visited: return [y]
-        visited.add(ctx)
-        ret = [y, [ctx, *[dfs(x, visited) for x in ctx.inputs]]]
+        if y in visited: return [y]
+        visited.add(y)
+        ret = [y, [ctx, *[search(x, visited) for x in ctx.inputs]]]
         if ctx.parent:
             ret[1].insert(0, ApplyNode())
             ret[1][1] = [ctx.parent]
         return ret
-    return dfs(param)
+    return search(param)
 
 class ApplyNode:
     def __str__(self): return 'apply'

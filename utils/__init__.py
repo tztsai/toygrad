@@ -12,6 +12,7 @@ from .dev import DefaultNone, pbar
 
 
 def onehot(x, k, *, cold=0, hot=1):
+    x = np.asarray(x)
     m = np.full((*x.shape, k), cold, dtype=np.int)
     for idx in itertools.product(*map(range, x.shape)):
         m[idx][x[idx]] = hot

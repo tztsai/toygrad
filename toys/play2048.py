@@ -13,9 +13,9 @@ class DQNAgent(Model):
     board_shape = (env.h, env.w)
     dim_out = env.action_space.n
     
-    conv_filters = 16
+    # conv_filters = 16
     hidden_dim1 = 64
-    hidden_dim2 = 32
+    hidden_dim2 = 64
     
     gamma = 0.999
     eps_start = 0.9
@@ -23,7 +23,7 @@ class DQNAgent(Model):
     eps_decay = 200
     replay_batch_size = 128
 
-    optim = Adam(lr=5e-3, reg='l2', lamb=0.01)
+    optim = Adam(lr=5e-3, reg='l2', lamb=1e-3)
     
     class Memory(list):
         def __init__(self, capacity=10000):
@@ -48,7 +48,7 @@ class DQNAgent(Model):
             flatten,
             Affine(self.hidden_dim1), leakyReLU,
             Affine(self.hidden_dim2), leakyReLU,
-            Affine(self.dim_out), leakyReLU
+            Affine(self.dim_out), softmax
         )
         
         self.eps = 1.
@@ -60,17 +60,6 @@ class DQNAgent(Model):
     def convolve_and_flatten(self, im):
         return concat(self.conv1(im).flatten(), self.conv2(im).flatten())
     
-    # def clear_memory(self):
-    #     for key in ['s0', 'a', 'r', 's1']:
-    #         self.memory[key] = []
-
-    # def add_memory(self, s0, a, r, s1):
-    #     for k, v in vars().items():
-    #         if k != 'self':
-    #             self.memory[k].append(v)
-    #             if len(self.memory[k]) > self.memory_size:
-    #                 for _ in range(10): self.memory[k].pop(0)
-                    
     def select_action(self, state):
         eps_thr = self.eps_end + (self.eps_start - self.eps_end) * self.eps
         self.eps *= np.exp(-1 / self.eps_decay)
@@ -81,22 +70,46 @@ class DQNAgent(Model):
                 
     def replay(self):
         if len(self.memory) < self.replay_batch_size: return
-        transitions = self.memory.sample(self.replay_batch_size)
-        batch = np.array(transitions).T
-        b_s0, b_a, b_r, b_s1 = batch
         
-        outputQ = self(b_s0)
-        nonfinal_mask = np.array([s is not None for s in b_s1])
+        transitions = self.memory.sample(self.replay_batch_size)
+        batch = np.array(transitions, dtype=object).T
+        b_s0, b_a, b_r, b_s1 = batch
+        b_s0 = np.stack(b_s0, axis=0)
+        b_a, b_r = b_a.astype(np.int), b_r.astype(np.float)
+        
+        mask1 = onehot(b_a, k=self.dim_out).astype(bool)
+        mask2 = np.array([s is not None for s in b_s1])
+        
+        outputQ = self(b_s0)[mask1]  # only keep selected actions
+        nextQ = np.zeros(outputQ.shape)
         nonfinal_next_states = np.array([s for s in b_s1 if s is not None])
-        nextQ = np.zeros(b_s1.shape)
-        nextQ[nonfinal_mask] = self(nonfinal_next_states)
-        expectedQ = (nextQ * self.gamma) + b_r
+        nextQ[mask2] = self(nonfinal_next_states).max(axis=1)
+        expectedQ = (nextQ * self.gamma) + b_r  # unrelated in backprop
         
         loss = self.loss(outputQ, expectedQ)
         self.optim(loss.backward())
         
+        from tests.gradcheck import checkgrad
+        def loss(w):
+            self.apply[2].w = w
+            outputQ = self(b_s0)[mask1]  # only keep selected actions
+            nextQ = np.zeros(outputQ.shape)
+            nonfinal_next_states = np.array([s for s in b_s1 if s is not None])
+            nextQ[mask2] = self(nonfinal_next_states).max(axis=1)
+            expectedQ = (nextQ * self.gamma) + b_r  # unrelated in backprop
+            return self.loss(outputQ, expectedQ)
+        checkgrad(self.apply[2].w, loss)
+        exit(0)
+        
     def loss(self, outputQ, expectedQ):
         return outputQ.mse(expectedQ)
+
+
+try:
+    agent = Model.load('2048-agent')
+    print('model loaded')
+except FileNotFoundError:
+    agent = DQNAgent()
 
     
 def episode_gif(states, gifname=None):
@@ -108,15 +121,6 @@ def episode_gif(states, gifname=None):
     if gifname is not None:
         makegif(frames, gifname)
 
-
-try:
-    agent = Model.load('2048-agent')
-    print('model loaded')
-except FileNotFoundError:
-    agent = Agent()
-
-
-
 def smooth(records, k=50):
     smoothed_records = np.zeros_like(records)
     for i in range(2, len(records)):
@@ -126,9 +130,11 @@ def smooth(records, k=50):
 
 
 scores = []
+interactive_score_plot = False
 
-fig, ax = plt.subplots()
-fig.show()
+if interactive_score_plot:
+    fig, ax = plt.subplots()
+    fig.show()
 
 for eps in (pb := pbar(range(1000), unit='eps')):
     obs = env.reset()
@@ -140,7 +146,8 @@ for eps in (pb := pbar(range(1000), unit='eps')):
             probabs = agent(old_obs := obs)[0]
             action = np.argmax(np.random.multinomial(1, probabs))
             obs, reward, done, info = env.step(action)
-            memory.add(old_obs, probabs, action, reward)
+            if done: obs = None
+            agent.memory.push(old_obs, action, reward, obs)
             obs_record.append(obs)
         else:
             env.render()
@@ -148,15 +155,12 @@ for eps in (pb := pbar(range(1000), unit='eps')):
             obs, reward, done, info = env.step(action)
 
     if play_mode == 'agent':
-        loss = loss_func(memory)
-        params = loss.backward()
-        optim(params)
-        agent.replay(memory.buffer)
+        agent.replay()
     
     scores.append(env.score)
     pb.set_postfix(score=env.score)
 
-    if eps % 5 == 0:
+    if interactive_score_plot and eps % 5 == 0:
         ax.cla()
         ax.plot(np.arange(eps+1), smooth(scores))
         fig.canvas.draw()
@@ -168,3 +172,6 @@ for eps in (pb := pbar(range(1000), unit='eps')):
         
     env.close()
     
+if not interactive_score_plot:
+    plt.plot(smooth(scores))
+    plt.show()

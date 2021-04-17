@@ -18,10 +18,11 @@ class Optimizer(AbstractFunction):
         for param in parameters:
             if not isinstance(param, Param):
                 info('Warning: %s is not a Param, skip optimization', param)
-            elif not param.grad_zero:
-                param += self.delta(param)
-                if self.reg:  # note that the reg_term is added to param
-                    param += self.reg_term(param)
+            elif not param.grad_clean:
+                if param.trainable:
+                    param += self.delta(param)
+                    if self.reg:
+                        param += self.lr * self.lamb * self.reg_term(param)
                 param.zero_grad()
 
     @abstractmethod
@@ -32,12 +33,12 @@ class Optimizer(AbstractFunction):
         if self.reg is None:
             return 0
         elif callable(self.reg):
-            return self.lamb * self.reg(param)
+            return self.reg(param)
         elif type(self.reg) is str:
             if self.reg.lower() in ['l1', 'lasso']:
-                return self.lamb * -np.sign(param)
+                return -np.sign(param)
             elif self.reg.lower() in ['l2', 'ridge']:
-                return self.lamb * -param
+                return -param
             else:
                 raise ValueError('unknown regularization')
         else:

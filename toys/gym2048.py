@@ -107,7 +107,7 @@ class Game2048Env(gym.Env):
 
         return self.board
 
-    def render(self, mode='human'):
+    def render(self, mode='rgb_array'):
         if mode == 'rgb_array':
             grid_size = self.grid_size
 
@@ -131,13 +131,14 @@ class Game2048Env(gym.Env):
             if not hasattr(self, 'im_plt'):
                 fig, ax = plt.subplots()
                 ax.axis('off')
-                self.im_fig = fig
+                self.im_fig, self.im_ax = fig, ax
                 self.im_plt = ax.imshow(im_array)
                 self.im_fig.show()
             else:
                 self.im_plt.set_data(im_array)
+            self.im_ax.set_title(str(int(self.score)))
             self.im_fig.canvas.draw()
-            plt.pause(0.1)
+            self.im_fig.canvas.start_event_loop(0.1)
             return im_array
 
         outfile = StringIO() if mode == 'ansi' else sys.stdout
