@@ -46,14 +46,12 @@ class Param(np.ndarray):
             if scale is None: scale = cls.random_init
             if type(scale) is str:
                 d_in = size[0] if hasattr(size, '__len__') else size
-                scale = Param.init_scale(d_in, scale)
+                scale = cls.init_scale(d_in, scale)
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
         else:
             if size is not None:  # fill an array of the given size
                 value = np.full(size, value, dtype=dtype)
-        par = np.asarray(value, dtype=dtype).view(cls)
-        par.dtype = dtype
-        return par
+        return np.asarray(value, dtype=dtype).view(cls)
     
     @staticmethod
     def init_scale(d_in, method):
@@ -72,6 +70,7 @@ class Param(np.ndarray):
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
         self.name = name
+        self.dtype = self.data.dtype
         self._ctx = None
         self._grad = 0 if not self.constant else None
 
@@ -102,7 +101,7 @@ class Param(np.ndarray):
 
     @property
     def data(self): return np.asarray(self)
-        
+
     def view(self, *args):
         if not args:
             return Param(self, dtype=self.dtype, kind=self.kind)

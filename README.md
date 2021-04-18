@@ -117,7 +117,6 @@ pred(<100, 10>, variable)
             if p.trainable:
                 p -= 1e-3 * p.grad
 >>> optimize(loss.backward())
-<graphviz.dot.Digraph object at ...>
 ```
 
 [A simple computation graph](compgraph.png)
