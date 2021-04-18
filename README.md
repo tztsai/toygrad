@@ -120,7 +120,7 @@ pred(<100, 10>, variable)
 <graphviz.dot.Digraph object at ...>
 ```
 
-[A simple computation graph](compgraph.png)
+![A simple computation graph](compgraph.png)
 
 ## TODO
 
