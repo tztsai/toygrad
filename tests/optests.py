@@ -1,7 +1,5 @@
-from init import *
-
-
-dev.setloglevel('INFO')
+from toych import *
+setloglevel('INFO')
 
 class F(Operation):
     partial = 1

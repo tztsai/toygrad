@@ -1,6 +1,5 @@
-from init import *
 import itertools
-from my_utils.utils import main
+from toych import *
 
 Param.rng = np.random
 np.random.seed(0)
@@ -24,9 +23,9 @@ def checkgrad(w, lossfun):
     assert np.allclose(g1, g2, rtol=1e-3, atol=1e-6), '%f' % np.abs(g1-g2).max()
     
     
-setloglevel('INFO')
-
 if __name__ == '__main__':
+    setloglevel('INFO')
+    
     x = Param(size=[50, 3], kind=0)
     y = Param(size=[50, 5], kind=0)
     t = np.random.randint(5, size=50)
@@ -75,13 +74,13 @@ if __name__ == '__main__':
 
     model2 = Compose(
         Affine(8), normalize(),
-        leakyReLU, #fixed_dropout(),
+        leakyReLU, fixed_dropout(),
         Affine(64), normalize(),
-        leakyReLU, #fixed_dropout(),
+        leakyReLU, fixed_dropout(),
         Affine(5)
     ); model2(x)
     
-    fixed_dropout = fixed_dropout()
+    dropout = fixed_dropout()
 
     for line in '''
     w: (x @ w).sigmoid().sum()
@@ -97,7 +96,7 @@ if __name__ == '__main__':
     w: (x @ w).max(axis=1).sum()
     w: (w.maximum(w2[:3])).mean()
     w2: (w * w.maximum(w2[:3])).mean()
-    w: (fixed_dropout(w) + fixed_dropout(w*2)).sum()
+    w: (dropout(w) + dropout(w*2)).sum()
     w: w.softmax().log().mean()
     w2: w2.concat(w3).tanh().sum()
     w3: w2.concat(w3).tanh().sum()

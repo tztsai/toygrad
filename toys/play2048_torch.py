@@ -1,12 +1,16 @@
-from init import *
+from tqdm import trange
+from msvcrt import getwch
+import matplotlib
+import matplotlib.pyplot as plt
+
+from toych import *
+from toych.utils import onehot
+from .gym2048 import Game2048Env
+
 import torch as pt
 from torch import nn
 from torch.optim import Adam
 import torch.nn.functional as F
-from gym2048 import Game2048Env
-from tqdm import trange
-from msvcrt import getwch
-import matplotlib
 
 del sum, max
 
@@ -26,7 +30,7 @@ class Lambda(nn.Module):
 class DQNAgent(nn.Sequential):
     dim_out = env.action_space.n
     
-    gamma = 0.999
+    gamma = 0.99
     eps_start = 1.
     eps_end = 0.001
     eps_decay = 30000
@@ -49,10 +53,10 @@ class DQNAgent(nn.Sequential):
     def __init__(self):
         super().__init__(
             Lambda(DQNAgent.preprocess),
-            nn.Linear(16, 128), nn.LayerNorm(128),
+            nn.Linear(256, 128), nn.LayerNorm(128),
             nn.LeakyReLU(), nn.Dropout(),
             nn.Linear(128, 80), nn.LayerNorm(80),
-            nn.LeakyReLU(),
+            nn.LeakyReLU(), nn.Dropout(0.2),
             nn.Linear(80, self.dim_out)
         )
         
@@ -62,7 +66,10 @@ class DQNAgent(nn.Sequential):
         
     @classmethod
     def preprocess(cls, board):
-        return pt.from_numpy(np.log2(board + 1.).reshape(-1, env.h * env.w)).to(pt.float)
+        board_size = env.h * env.w
+        board = np.log2(board + 1.).astype(np.int).reshape(-1, board_size)
+        board = np.array([onehot(b, board_size).reshape(-1) for b in board])
+        return pt.from_numpy(board).to(pt.float)
     
     def select_action(self, state):
         self.eps = self.eps_end + (self.eps_start - self.eps_end) * \
@@ -91,8 +98,11 @@ class DQNAgent(nn.Sequential):
         mask2 = np.array([s is not None for s in b_s1])
         
         outputQ = self(b_s0)[mask1]  # only keep selected actions
-        nextQ = pt.full(outputQ.shape, -10.)
+        nextQ = pt.full(outputQ.shape, -128.)
         nonfinal_next_states = np.array([s for s in b_s1 if s is not None])
+        # mask3 = onehot(self(nonfinal_next_states).detach().max(dim=1)[1],
+        #                k=self.dim_out).astype(bool)
+        # nextQ[mask2] = past_agent(nonfinal_next_states).detach()[mask3]
         nextQ[mask2] = past_agent(nonfinal_next_states).max(dim=1)[0].detach()
         expectedQ = (nextQ * self.gamma) + b_r
 
@@ -126,7 +136,7 @@ def episode_gif(states, gifname=None):
     if gifname is not None:
         makegif(frames, gifname)
 
-def smooth(records, k=50):
+def smooth(records, k=100):
     smoothed_records = np.zeros_like(records)
     for i in range(2, len(records)):
         i0 = max(0, i - k)
@@ -165,7 +175,7 @@ for eps in (pb := trange(EPISODES, unit='eps')):
         agent.replay()
     
     scores.append(env.score)
-    pb.set_postfix(score=env.score, eps=agent.eps)
+    pb.set_postfix(score=env.score, avg_score=np.mean(scores[-100:]), eps=agent.eps)
 
     if interactive_score_plot and eps % 10 == 0:
         ax.cla()

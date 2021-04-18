@@ -1,7 +1,7 @@
 import gym
 import numpy as np
 import matplotlib.pyplot as plt
-from init import *
+from toych import *
 
 del sum, max
 
@@ -73,7 +73,7 @@ def discount_rewards(rewards, discount=0.97):
     for t in reversed(range(len(rewards))):
         R = discount * R + rewards[t]
         discounted_rewards[t] = R
-    return standardize(discounted_rewards)
+    return normalize(discounted_rewards)
 
 def smooth(records, k=10):
     smoothed_records = np.zeros_like(records)

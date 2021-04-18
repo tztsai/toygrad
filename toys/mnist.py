@@ -1,4 +1,4 @@
-from init import *
+from toych import *
 from data.mnist import *
 
 

@@ -1,4 +1,4 @@
-from init import *
+from toych import *
 
 a = Param(size=[5, 5])
 

@@ -1,5 +1,5 @@
 import pickle
-from init import *
+from toych import *
 
 
 (x_tr, y_tr), (x_ts, y_ts) = pickle.load(open('../data/cifar-10.pkl', 'rb'), encoding='bytes')

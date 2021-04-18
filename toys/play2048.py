@@ -1,8 +1,12 @@
-from gym2048 import Game2048Env
 from msvcrt import getwch
 import matplotlib
-from init import *
+import matplotlib.pyplot as plt
+
+from .gym2048 import Game2048Env
+from toych import *
 del sum, max
+
+onehot = utils.onehot
 
 env = Game2048Env()
 play_mode = 'agent'
@@ -16,10 +20,10 @@ class DQNAgent(Model):
     dim_in = env.h * env.w
     dim_out = env.action_space.n
     
-    gamma = 0.999
+    gamma = 0.99
     eps_start = 1.
     eps_end = 1e-3
-    eps_decay = 10000
+    eps_decay = 30000
     replay_batch_size = 256
 
     optim = Adam(decay='l2')
@@ -44,7 +48,7 @@ class DQNAgent(Model):
         self.apply = Compose(
             self.preprocess,
             Affine(128), normalize(),
-            leakyReLU, dropout,
+            leakyReLU, #dropout,
             Affine(64), normalize(),
             leakyReLU,
             Affine(self.dim_out)
@@ -56,7 +60,8 @@ class DQNAgent(Model):
         self.past_copy = None
 
     def preprocess(self, board):
-        return np.log2(board + 1.).reshape(-1, self.dim_in)
+        board = np.log2(board + 1.).astype(np.int).reshape(-1, self.dim_in)
+        return np.array([onehot(b, self.dim_in).reshape(-1) for b in board])
     
     def select_action(self, state):
         self.eps = self.eps_end + (self.eps_start - self.eps_end) * \
@@ -67,23 +72,19 @@ class DQNAgent(Model):
                 return np.argmax(self(state))
         else:
             return random.randrange(self.dim_out)
-                
+
     def replay(self):
         if len(self.memory) < self.replay_batch_size: return
         
         transitions = self.memory.sample(self.replay_batch_size)
         batch = np.array(transitions, dtype=object).T
         b_s0, b_a, b_r, b_s1 = batch
-        b_s0 = np.stack(b_s0, axis=0)
+        b_s0, b_s1 = np.stack(b_s0, axis=0), np.stack(b_s1, axis=0)
         b_a, b_r = b_a.astype(np.int), b_r.astype(np.float)
         
-        mask1 = onehot(b_a, k=self.dim_out).astype(bool)
-        mask2 = np.array([s is not None for s in b_s1])
-        
-        outputQ = self(b_s0)[mask1]  # only keep selected actions
-        nextQ = np.full(outputQ.shape, -16.)
-        nonfinal_next_states = np.array([s for s in b_s1 if s is not None])
-        nextQ[mask2] = self.past_copy(nonfinal_next_states).max(axis=1)
+        # only keep selected actions
+        outputQ = self(b_s0)[onehot(b_a, k=self.dim_out).astype(bool)]
+        nextQ = self.past_copy(b_s1).max(axis=1)
         expectedQ = (nextQ * self.gamma) + b_r  # unrelated in backprop
         
         loss = outputQ.mse(expectedQ)
@@ -130,7 +131,7 @@ for eps in (pb := pbar(range(EPISODES), unit='eps')):
         if play_mode == 'agent':
             action = agent.select_action(old_obs := obs)
             obs, reward, done, info = env.step(action)
-            if done: obs = None
+            if done: reward = 128
             agent.memory.push(old_obs, action, reward, obs)
             obs_record.append(obs)
         else:
