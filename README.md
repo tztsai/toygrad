@@ -94,17 +94,17 @@ normalize()  # now it is a function containing trainable weight and bias
 "Compose several functions to build a neural network!"
 >>> from toych.func import *
 >>> nn = tc.model.Compose(
-    Conv2D(32, size=(5, 5), stride=2),
-    Conv2D(64, size=(5, 5), stride=2),
-    Conv2D(128, size=(3, 3), stride=2),
-    MaxPool2D((4, 4)),
-    flatten,
-    Affine(64), normalize(),
-    dropout, ReLU,  # dropout as a normal function
-    Affine(32), normalize(),
-    dropout(0.2), ReLU,  # dropout as an initialized function (rate=0.2)
-    Affine(10), softmax
-)
+        Conv2D(32, size=(5, 5), stride=2),
+        Conv2D(64, size=(5, 5), stride=2),
+        Conv2D(128, size=(3, 3), stride=2),
+        MaxPool2D((4, 4)),
+        flatten,
+        Affine(64), normalize(),
+        dropout, ReLU,  # dropout as a normal function
+        Affine(32), normalize(),
+        dropout(0.2), ReLU,  # dropout as an initialized function (rate=0.2)
+        Affine(10), softmax
+    )
 >>> pred = nn(imgs)  # quite slow!
 pred(<100, 10>, variable)
 >>> y = tc.utils.onehot(np.random.randint(10, size=100), 10)

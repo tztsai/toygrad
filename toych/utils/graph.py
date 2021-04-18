@@ -16,7 +16,8 @@ def nodelabel(node):
     nid = id(node)
     if nid not in NODES:
         if isinstance(node, np.ndarray) and node.size > 2:
-            node = node.view(Param)
+            if not isinstance(node, Param):
+                node = node.view(Param)
             lb = node.simple_repr()
         else:
             try:
