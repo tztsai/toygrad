@@ -69,10 +69,12 @@ array([...])
 >>> e = (x @ w + b).smce(y)  # softmax cross-entropy
 >>> tc.utils.graph.show_compgraph(e)  # see the graph below
 <graphviz.dot.Digraph object at ...>
->>> for p in e.backward():
-        if p.trainable:
-            p -= 1e-3 * p.grad
+>>> def SGD(pars):
+        for p in pars:
+            if p.trainable:
+                p -= 1e-3 * p.grad
             p.zero_grad()
+>>> SGD(e.backward())
 
 "Some toych functions can be constructed to have trainable Params in addition to being applied directly."
 >>> np.all(tc.Affine(x, w, b) == x @ w + b)
@@ -112,14 +114,10 @@ normalize()  # now it is a function containing trainable weight and bias
 pred(<100, 10>, variable)
 >>> y = tc.utils.onehot(np.random.randint(10, size=100), 10)
 >>> loss = pred.crossentropy(y)
->>> def optimize(pars):
-        for p in pars:
-            if p.trainable:
-                p -= 1e-3 * p.grad
->>> optimize(loss.backward())
+>>> SGD(loss.backward())
 ```
 
-[A simple computation graph](compgraph.png)
+![A simple computation graph](compgraph.png)
 
 ## TODO
 
