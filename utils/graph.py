@@ -1,6 +1,7 @@
 import graphviz as gv
 import numpy as np
 import random
+import os
 import numbers
 from core import Function, Param
 
@@ -30,7 +31,7 @@ def nodelabel(node):
         lb = NODES[nid][1]
     return lb
 
-def dot_graph(graph):
+def dot_graph(graph, graphname='_temp_graph'):
     def add_edges(graph):
         def add_node(n):
             nid = str(random.random()) if isinstance(n, numbers.Number) else hex(id(n))
@@ -41,7 +42,7 @@ def dot_graph(graph):
         for child in children:
             g.edge(add_node(child[0]), add_node(node))
             add_edges(child)
-    g = gv.Digraph('A toych computation graph')
+    g = gv.Digraph(graphname)
     add_edges(graph)
     return g
 
@@ -68,4 +69,6 @@ class ApplyNode:
 def show_compgraph(param, filename=None):
     dot = dot_graph(compgraph(param))
     dot.render(filename=filename, format='png', view=True, cleanup=bool(filename))
+    for f in os.listdir():
+        if '_temp_graph' in f: os.remove(f)
     return dot

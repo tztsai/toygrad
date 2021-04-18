@@ -49,8 +49,14 @@ class abs(UnaryOp):
     
 class ReLU(UnaryOp):
     def apply(self, x):
-        self.deriv = x >= 0.
+        self.deriv = (x >= 0.)
         return np.maximum(x, 0.)
+
+class leakyReLU(UnaryOp):
+    partial = True
+    def apply(self, x, negslope=0.01):
+        self.deriv = np.maximum(negslope, x >= 0.)
+        return self.deriv * x
 
 class dropout(UnaryOp):
     partial = True
@@ -115,8 +121,8 @@ class smce(Operation):
     ndim_in, ndim_out = (1, 1), 0
     def apply(self, x, y):
         if isinstance(y, Param): assert y.constant
-        ids = random.sample(range(len(y)), min(10, len(y)))
-        assert all(np.sum(y[ids], axis=1) == 1.)
+        sample_ids = random.sample(range(len(y)), min(10, len(y)))
+        assert all(np.sum(y[sample_ids], axis=1) == 1.)
         p = (ex := np.exp(x)) / np.sum(ex, axis=-1, keepdims=True)
         e = -np.sum(y * np.log(p), axis=-1)
         self.deriv = (p - y) / e.size, None
@@ -136,7 +142,7 @@ class MatMul(Operation):
     def backward(self, grad_out):
         grads = [grad_out @ np.swapaxes(self._y, -1, -2),
                  np.swapaxes(self._x, -1, -2) @ grad_out]
-        return (g.reshape(x.shape) for x, g in zip(self.inputs, grads))
+        return [g.reshape(x.shape) for x, g in zip(self.inputs, grads)]
 
 class reshape(Operation):
     def apply(self, x, shape):
@@ -162,7 +168,7 @@ class getitem(Operation):
         grad_x = np.zeros_like(self._x)
         grad_x[self._idx] = grad_y
         yield grad_x
-        
+
 class concat(Operation):
     """Horizontally concat two arrays together."""
     def apply(self, x, y):
@@ -222,10 +228,6 @@ def sigmoid(x): return exp(x) / (1 + exp(x))
 def swish(x): return x * sigmoid(x)
 
 @registermethod
-def leakyReLU(x, neg_slope=0.01):
-    return ReLU(x) - ReLU(neg_slope * -x)
-
-@registermethod
 def crossentropy(x, y, axis=-1, avg=True):
     e = (y * -log(x)).sum(axis=axis)
     return e.mean() if avg else e
@@ -244,18 +246,12 @@ def var(x, axis=None, keepdims=False):
     return mse(x, mean(x, axis, keepdims=True), axis, keepdims)
 
 @registermethod
-def std(x, axis=None, keepdims=False):
-    return sqrt(var(x, axis, keepdims))
+def std(x, axis=None, keepdims=False, eps=1e-5):
+    return sqrt(var(x, axis, keepdims) + eps)
 
 @registermethod
 def flatten(x):
     return reshape(x, [len(x), -1])
-
-@registermethod
-def normalize(x, axis=0):
-    mu = mean(x, axis, keepdims=True)
-    sigma = std(x, axis, keepdims=True)
-    return (x - mu) / maximum(sigma, 1e-6)
 
 
 ### other functions ###
@@ -287,8 +283,9 @@ class MaxPool2D(Pool2D):
 ### operations or methods containing parameters to be initialized ###
 
 class Conv2D(Operation):
+    cache = False
+    
     def __init__(self, c_out, size, stride=1, groups=1, batchnorm=False):
-        super().__init__()
         if type(size) is int: size = (size, size)
         self.c_in, self.c_out = None, c_out
         self.size, self.stride, self.groups, self.bn = size, stride, groups, batchnorm
@@ -300,7 +297,7 @@ class Conv2D(Operation):
         self.bn = BatchNorm2D() if self.bn else None
         self.built = True
         
-    def update_args(self, input):
+    def update_args(self, input):  # returns the args passed to "self.apply"
         if not self.built: self.build(input)
         return super().update_args(input, filters=self.filters,
                                    stride=self.stride, groups=self.groups)
@@ -369,7 +366,6 @@ class Conv2D(Operation):
 
 class Affine(Function):
     def __init__(self, d_out, with_bias=True):
-        super().__init__()
         self.d_out = d_out
         self.with_bias = with_bias
         self.built = False
@@ -387,49 +383,56 @@ class Affine(Function):
     def apply(self, input, weight, bias):
         return input @ weight + bias
 
-class BatchNorm2D(Function):
+class normalize(Function):
+    register = True
     eps = 1e-5
-    mom = 0.1  # momentum
-    track_running_stats = False
+    mom = 0.9
+    axis = 0  # the axis along which to apply normalization
     
-    def __init__(self):
-        super().__init__()
-        self.num_batches_tracked = 0
+    def __init__(self, axis=None, track_stats=False):
+        if axis is not None:  # otherwise use class attribute
+            self.axis = axis
+        self.track_len = 0
+        self.track_stats = track_stats
         self.built = False
     
-    @property
-    def training(self):
-        return Param.training
-
     def build(self, input):
-        size = input.shape[1]
-        self.weight, self.bias = Param(0, size=size), Param(0, size=size)
-        self.running_mean, self.running_var = np.zeros(size), np.zeros(size)
+        axes = ensure_list(self.axis)
+        shape = [1 if i in axes else s for i, s in enumerate(np.shape(input))]
+        self.w = Param(size=shape)
+        self.b = Param(size=shape)
+        self.running_mean = np.zeros(shape)
+        self.running_std = np.zeros(shape)
         self.built = True
-        
+    
     def update_args(self, input):
         if not self.built: self.build(input)
         return super().update_args(input)
-
-    def apply(self, x):
-        assert self.built, 'BatchNorm2D not initialized'
-        
-        if self.track_running_stats or self.training:
-            batch_mean = x.mean(axis=(0,2,3))
-            xc = (x - batch_mean.reshape(shape=[1,-1,1,1]))
-            batch_var = (xc**2).mean(axis=(0,2,3))
-
-        if self.track_running_stats:
-            self.running_mean = (1 - self.mom) * self.running_mean + self.mom * batch_mean
-            self.running_var = (1 - self.mom) * self.running_var + self.mom * batch_var
-            self.num_batches_tracked += 1
-
-        if self.training:
-            return self.normalize(x, batch_mean, batch_var)
+    
+    def apply(self, input, axis=None):
+        if not hasattr(self, 'built'):
+            self.built = False
         else:
-            return self.normalize(x, self.running_mean, self.running_var)
+            assert axis is None
+        if axis is None:
+            axis = self.axis
+            
+        batch_mean = mean(input, axis, keepdims=True)
+        batch_std = std(input, axis, keepdims=True, eps=self.eps)
 
-    def normalize(self, x, mean, var):
-        x = (x - mean.reshape(shape=[1, -1, 1, 1])) * self.weight.reshape(shape=[1, -1, 1, 1])
-        return (x / (var.add(self.eps).reshape(shape=[1,-1,1,1]).sqrt()) +
-                self.bias.reshape(shape=[1,-1,1,1]))
+        if self.built and self.track_stats:
+            m = 0. if self.track_len == 0 else self.mom
+            self.track_len += 1
+            self.running_mean[:] = m * self.running_mean + (1 - m) * batch_mean
+            self.running_std[:]  = m * self.running_std + (1 - m) * batch_std
+            x = (input - self.running_mean) / self.running_std
+        else:
+            x = (input - batch_mean) / batch_std
+
+        if self.built and Param.training:
+            return x * self.w + self.b
+        else:
+            return x
+
+class normalize2d(normalize):
+    axis = (0, 2, 3)

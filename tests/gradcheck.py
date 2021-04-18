@@ -7,7 +7,7 @@ np.random.seed(0)
 random.seed(0)
 
 def checkgrad(w, lossfun):
-    def numgrad(w, h=1e-6):
+    def numgrad(w, h=1e-5):
         grad = np.zeros(w.shape)
         for idx in itertools.product(*map(range, w.shape)):
             w1 = w.copy()
@@ -18,10 +18,10 @@ def checkgrad(w, lossfun):
     
     Lw = lossfun(w)
     # graph.show_compgraph(Lw)
-    params = Lw.backward()
+    params = Lw.backward()#debugfile='autograd')
     g1, g2 = w.grad, numgrad(w)
     for p in params: p.zero_grad()
-    assert np.allclose(g1, g2, atol=1e-6), '%f' % (g1-g2).mean()
+    assert np.allclose(g1, g2, rtol=1e-3, atol=1e-6), '%f' % np.abs(g1-g2).max()
     
     
 setloglevel('INFO')
@@ -43,6 +43,9 @@ if __name__ == '__main__':
     L = Affine(5); L(x)
     C = Conv2D(4, 3, stride=2); C(im)
     w4 = Param(size=[3, 24])
+    x2 = Param(size=[256, 16])
+    w5 = Param(size=[16, 8])
+    w6 = Param(size=[1, 8])
     a = np.random.randint(5, size=50)
     oha = onehot(a, 5).astype(bool)
 
@@ -65,30 +68,36 @@ if __name__ == '__main__':
         return apply
     
     model = Compose(
-        Affine(24), tanh, fixed_dropout(0.4),
+        Affine(24), normalize(),
+        tanh, fixed_dropout(0.4),
         Affine(5), softmax
     ); model(x)
 
     model2 = Compose(
-        Affine(24), leakyReLU,
-        Affine(16), leakyReLU,
-        Affine(5), softmax
+        Affine(8), normalize(),
+        leakyReLU, #fixed_dropout(),
+        Affine(64), normalize(),
+        leakyReLU, #fixed_dropout(),
+        Affine(5)
     ); model2(x)
     
     fixed_dropout = fixed_dropout()
 
     for line in '''
-    w: ((x @ w).exp() / (1 + (x @ w).exp())).sum()
     w: (x @ w).sigmoid().sum()
+    w: ((x @ w).normalize() @ w2).mse(y)
+    w5: [setattr(model2[0], 'w', w5), model2(x2).mean()][1]
+    w6: [setattr(model2[1], 'w', w6), model2(x2).mean()][1]
+    w: w.normalize().mean()
+    w: w.leakyrelu().sum()
+    w4: [setattr(model[0], 'w', w4), loss1(model(x) + model(2*x))][1]
+    w4: [setattr(model[0], 'w', w4), loss2(model(x))][1]
+    w: ((x @ w).exp() / (1 + (x @ w).exp())).sum()
     w: (x @ w).leakyrelu().sum()
     w: (x @ w).max(axis=1).sum()
     w: (w.maximum(w2[:3])).mean()
     w2: (w * w.maximum(w2[:3])).mean()
-    w: ((x @ w).normalize() @ w2).mse(y)
     w: (fixed_dropout(w) + fixed_dropout(w*2)).sum()
-    w4: [setattr(model[0], 'w', w4), loss1(model(x) + model(2*x))][1]
-    w4: [setattr(model[0], 'w', w4), loss2(model(x))][1]
-    w4: [setattr(model2[0], 'w', w4), loss1(model2(x) * model2(2*x))][1]
     w: w.softmax().log().mean()
     w2: w2.concat(w3).tanh().sum()
     w3: w2.concat(w3).tanh().sum()
@@ -113,7 +122,7 @@ if __name__ == '__main__':
     b: (x @ w + b).sum()
     b: (x @ w + b).tanh().sum()
     w: (x @ w + b).softmax().crossentropy(t)
-    k: im.conv2d(k).mean()
+    k: im.conv2d(k).maxpool2d().mean()
     k: im.conv2d(k[:2, :, :2, :2]).mean()
     k: im.conv2d(k).reshape([4, -1]).sum()
     k: (im.conv2d(k, stride=2).reshape([2, -1]) @ fc).smce(y2)

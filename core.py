@@ -59,9 +59,9 @@ class Param(np.ndarray):
             self.__init__(kind='constant')
         
     def __init__(self, *args, kind='trainable', name=None, **kwds):
-        self.name = name if name else type(self).__name__
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
+        self.name = name if name else 'array' if self.constant else 'P' + hex(id(self))[-3:]
         self._ctx = None
         self._grad = 0 if not self.constant else None
 
@@ -105,19 +105,21 @@ class Param(np.ndarray):
         else:
             return par
         
-    def backward(self):
+    def backward(self, debugfile=None):
         if not Param.training: return
         assert not self.constant and self.ndim == 0, 'backprop must start from a scalar variable'
         
-        visited, params = set(), []
-        def deepwalk(param):
-            visited.add(param)
+        stack, visited, params = [[0, self]], {self}, []
+        while stack:
+            exiting, param = stack.pop()
+            if exiting:
+                params.append(param)
+                continue
+            stack.append([1, param])
             if param._ctx:
-                [deepwalk(p) for p in param._ctx.inputs if isinstance(p, Param)
-                 and not p.constant and p not in visited]
-            params.append(param)
-            
-        deepwalk(self)
+                [[visited.add(p), stack.append([0, p])] for p in param._ctx.inputs
+                 if isinstance(p, Param) and not p.constant and p not in visited]
+
         self.grad = np.ones(self.shape)
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
@@ -126,19 +128,14 @@ class Param(np.ndarray):
                 x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
                 if isinstance(x, Param) and not x.constant:
+                    # if debugfile and np.ndim(x) > 1:
+                    #     with open(debugfile, 'a') as df:
+                    #         df.write('\n%s\n' % ctx)
+                    #         np.savetxt(df, x[:3,:4], fmt='%.3e')
+                    #         df.write('\n')
+                    #         np.savetxt(df, g[:3,:4], fmt='%.3e')
                     x.grad += g
-        # queue, params = Queue(), set()  # use breadth-first-search since grads may accumulate
-        # queue.put(self)
-        # while not queue.empty():
-        #     y = queue.get()
-        #     params.add(y)
-        #     if (ctx := y._ctx) is None: continue
-        #     input_grads = ctx.backward(y.grad)
-        #     for x, g_x in zip(ctx.inputs, input_grads):
-        #         if isinstance(x, Param) and not x.constant:
-        #             x.grad += g_x
-        #             if x not in params: queue.put(x)
-        return params  # return visited parameters for optimization
+        return params  # return parameters for optimization
     
     def copy(self):
         cp = Param(super().copy(), dtype=self.dtype)
@@ -199,6 +196,8 @@ class FunctionMeta(ABCMeta):
         return super().__reduce__()
 
 class AbstractFunction(ABC, metaclass=FunctionMeta):
+    blackbox = False  # whether this function appears as a single node in the compgraph
+
     def __new__(cls, *args, **kwds):
         fn = object.__new__(cls)
         fn.__name__ = f"{cls.__name__}{signature_str(*args, **kwds)}"
@@ -211,8 +210,11 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
         return args, kwds
         
     def __call__(self, *args, **kwds):
-        with ProfileOp(self):  # log elapsed time
-            return self.apply(*args, **kwds)
+        with ProfileOp(self):
+            output = self.apply(*args, **kwds)
+        if isinstance(output, Param) and self.blackbox:
+            output._outer_ctx = self
+        return output
         
     def __repr__(self):
         return self.__name__
@@ -249,7 +251,7 @@ class Function(AbstractFunction):
         partial: whether this function contains params to be initialized
         register: whether to register this function as a method of the Param class
     """
-    blackbox = False
+    blackbox = logLevel != DEBUG
     register = False
     partial = False
 
@@ -277,18 +279,15 @@ class Function(AbstractFunction):
         return ctx.decide_call(*args, **kwds)
 
     def update_args(self, *args, **kwds):
-        args += self.args
-        kwds = {**self.kwds, **kwds}
+        if hasattr(self, 'args'): args += self.args
+        if hasattr(self, 'kwds'): kwds = {**self.kwds, **kwds}
         return super().update_args(*args, **kwds)
     
     def __getattr__(self, name):
         return getattr(self.parent, name)
     
     def __call__(self, *args, **kwds):
-        output = super().__call__(*args, **kwds)
-        if isinstance(output, Param) and self.blackbox:
-            output._outer_ctx = self
-        return output
+        return super().__call__(*args, **kwds)
     __call__ = wrap_call(__call__)
     
 

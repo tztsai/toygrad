@@ -14,7 +14,7 @@ env = Game2048Env()
 play_mode = 'agent'
 
 EPISODES = 10000
-SYNC_INTERVAL = 50
+SYNC_INTERVAL = 100
 
 
 class Lambda(nn.Module):
@@ -30,10 +30,10 @@ class DQNAgent(nn.Sequential):
     eps_start = 1.
     eps_end = 0.001
     eps_decay = 30000
-    replay_batch_size = 300
+    replay_batch_size = 256
     
     class Memory(list):
-        def __init__(self, capacity=10000):
+        def __init__(self, capacity=50000):
             self.capacity = capacity
             self.p = 0
         
@@ -51,16 +51,14 @@ class DQNAgent(nn.Sequential):
             Lambda(DQNAgent.preprocess),
             nn.Linear(16, 128), nn.LayerNorm(128),
             nn.LeakyReLU(), nn.Dropout(),
-            nn.Linear(128, 64), nn.LayerNorm(64),
-            nn.LeakyReLU(), #nn.Dropout(),
-            nn.Linear(64, self.dim_out),
-            nn.Softmax(-1)
+            nn.Linear(128, 80), nn.LayerNorm(80),
+            nn.LeakyReLU(),
+            nn.Linear(80, self.dim_out)
         )
         
         self.eps = self.eps_start
         self.steps = 0
         self.memory = self.Memory()
-        self.optimizer = Adam(self.parameters())
         
     @classmethod
     def preprocess(cls, board):
@@ -102,16 +100,20 @@ class DQNAgent(nn.Sequential):
         loss.backward()
         for param in self.parameters():
             param.grad.data.clamp_(-1., 1.)
-        self.optimizer.step()
-        self.optimizer.zero_grad()
+        optimizer.step()
+        optimizer.zero_grad()
 
 
 try:
-    agent = pt.load('2048-agent')
+    # assert 0
+    agent = pt.load('2048-agent-torch')
+    print('model loaded')
 except:
     agent = DQNAgent()
 past_agent = DQNAgent()
 past_agent.sync_with(agent)
+
+optimizer = Adam(agent.parameters())
 
     
 def episode_gif(states, gifname=None):
@@ -124,10 +126,10 @@ def episode_gif(states, gifname=None):
     if gifname is not None:
         makegif(frames, gifname)
 
-def smooth(records, k=100):
+def smooth(records, k=50):
     smoothed_records = np.zeros_like(records)
     for i in range(2, len(records)):
-        i0 = max(0, i - 10)
+        i0 = max(0, i - k)
         smoothed_records[i] = np.mean(records[i0:i])
     return smoothed_records
 
@@ -171,10 +173,10 @@ for eps in (pb := trange(EPISODES, unit='eps')):
         fig.canvas.draw()
         fig.canvas.start_event_loop(0.001)
     
+    if eps % 500 == 0:
+        pt.save(agent, '2048-agent-torch')
     if env.score > 2000:
-        pt.save(agent, '2048-agent')
-        if env.score > 3000:
-            episode_gif(obs_record)#, f'cartpole:{eps_reward}.gif')
+        episode_gif(obs_record, f'cartpole:{env.score}.gif')
         
     env.close()
     

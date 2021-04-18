@@ -10,8 +10,8 @@ env = gym.make('CartPole-v1')
 class Agent(Model):
     def __init__(self, dim_out):
         self.apply = Compose(
-            Affine(24), dropout(0.4), ReLU,
-            Affine(4), tanh,
+            Affine(32), dropout(), leakyReLU,
+            Affine(4), leakyReLU,
             Affine(dim_out), softmax
         )
         
@@ -22,7 +22,7 @@ class Agent(Model):
             optim(loss.backward())
 
 class Memory(dict):
-    replay_buffer_size = 0
+    capacity = 0
     
     def __init__(self):
         self.buffer = []
@@ -32,15 +32,15 @@ class Memory(dict):
         if self:  # add memory to replay buffer
             self.buffer.append(self.copy())
             self.buffer.sort(key=lambda m: -len(m['rwd']))
-            if len(self.buffer) > self.replay_buffer_size:
-                self.buffer.pop()
+            if len(self.buffer) > self.capacity:
+                self.buffer.pop(0)
         for key in ['obs', 'out', 'act', 'rwd']:
             self[key] = []
         
     def add(self, obs, out, act, rwd):
         for k, v in vars().items():
             if k != 'self': self[k].append(v)
-            
+
     
 def episode_gif(states, gifname=None):
     env.reset()
@@ -58,7 +58,7 @@ try:
 except FileNotFoundError:
     agent = Agent(2)
 
-optim = Adam(lr=5e-3, reg='l2', lamb=0.01)
+optim = Adam(lr=1e-3)
 
 
 def loss_func(memory, outputs=None):
@@ -89,13 +89,14 @@ eps_rewards = []
 fig, ax = plt.subplots()
 fig.show()
 
-for eps in (pb := pbar(range(1000), unit='eps')):
+for eps in (pb := pbar(range(500), unit='eps')):
     obs = env.reset()
     obs_record = []
     done = False
     
     while not done:
-        probabs = agent(old_obs := obs)[0]
+        with Param.not_training():
+            probabs = agent(old_obs := obs)[0]
         action = np.argmax(np.random.multinomial(1, probabs))
         obs, reward, done, info = env.step(action)
         obs_record.append(obs)
@@ -108,17 +109,17 @@ for eps in (pb := pbar(range(1000), unit='eps')):
     
     eps_reward = sum(memory['rwd'])
     eps_rewards.append(eps_reward)
-    pb.set_postfix(reward=eps_reward)
+    pb.set_postfix(reward=eps_reward, avg_reward=np.mean(eps_rewards))
 
     if eps % 5 == 0:
         ax.cla()
         ax.plot(np.arange(eps+1), smooth(eps_rewards))
         plt.pause(0.01)
     
-    if eps_reward >= 500:
+    if (eps + 1) % 100 == 0:
         agent.save('cartpole-agent')
-        # episode_gif(obs_record)#, f'cartpole:{eps_reward}.gif')
-        
+    # if eps_reward >= 500:
+    #     episode_gif(obs_record)#, f'cartpole:{eps_reward}.gif')
+
     env.close()
     memory.clear()
-    
