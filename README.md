@@ -17,7 +17,7 @@ Try out the following code.
 6
 
 "Create a Param."
->>> Param.auto_name = True  # automatically name the Param (only for fun, very slow)
+>>> Param.auto_name = True  # automatically name the Param (only for fun, sometimes slow)
 >>> x = Param([1, 2, 3]); x
 x(<3>, variable)  # the first item is the shape of the Param, the second is its kind
 >>> y = tc.max(x)
@@ -64,7 +64,7 @@ array([...])
 >>> w = Param(size=[4, 3])
 >>> b = Param(size=3)
 
-"Let's SGD! 😁"
+"Let's have some SGD! 😁"
 >>> y = tc.utils.onehot(np.random.randint(3, size=10), k=3)  # OK to directly use numpy arrays
 >>> e = (x @ w + b).smce(y)  # softmax cross-entropy
 >>> for p in e.backward():
