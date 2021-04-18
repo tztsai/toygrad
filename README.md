@@ -67,9 +67,12 @@ array([...])
 "Let's have some SGD! 😁"
 >>> y = tc.utils.onehot(np.random.randint(3, size=10), k=3)  # OK to directly use numpy arrays
 >>> e = (x @ w + b).smce(y)  # softmax cross-entropy
+>>> tc.utils.graph.show_compgraph(e)  # see the graph below
+<graphviz.dot.Digraph object at ...>
 >>> for p in e.backward():
         if p.trainable:
             p -= 1e-3 * p.grad
+            p.zero_grad()
 
 "Some toych functions can be constructed to have trainable Params in addition to being applied directly."
 >>> np.all(tc.Affine(x, w, b) == x @ w + b)
@@ -114,9 +117,10 @@ pred(<100, 10>, variable)
             if p.trainable:
                 p -= 1e-3 * p.grad
 >>> optimize(loss.backward())
->>> tc.utils.graph.show_compgraph(loss)  # plot a computation graph
 <graphviz.dot.Digraph object at ...>
 ```
+
+[A simple computation graph](compgraph.png)
 
 ## TODO
 

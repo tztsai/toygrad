@@ -119,13 +119,13 @@ class softmax(Operation):
 class smce(Operation):
     """Softmax Crossentropy"""
     ndim_in, ndim_out = (1, 1), 0
-    def apply(self, out, labels):
-        if isinstance(y, Param): assert y.constant
-        sample_ids = random.sample(range(len(y)), min(10, len(y)))
-        assert all(np.sum(labels[sample_ids], axis=1) == 1.)
+    def apply(self, out, target):
+        if isinstance(out, Param): assert out.constant
+        sample_ids = random.sample(range(len(out)), min(10, len(out)))
+        assert all(np.sum(target[sample_ids], axis=1) == 1.)
         probabs = (ex := np.exp(out)) / np.sum(ex, axis=-1, keepdims=True)
-        e = -np.sum(labels * np.log(probabs), axis=-1)
-        self.deriv = (probabs - labels) / e.size, None
+        e = -np.sum(target * np.log(probabs), axis=-1)
+        self.deriv = (probabs - target) / e.size, None
         return e.mean()
 
 

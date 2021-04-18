@@ -168,10 +168,12 @@ class Param(np.ndarray):
     def simple_repr(self):
         name = self.name
         if self.auto_name and not self.name:
-            bindings = inspect.stack()[1].frame.f_locals
-            for k, v in bindings.items():
-                if id(self) == id(v):
-                    name = self.name = k; break
+            call_stack = inspect.stack()
+            if call_stack[1].function == '__repr__':
+                bindings = call_stack[2].frame.f_locals
+                for k, v in bindings.items():
+                    if id(self) == id(v):
+                        name = self.name = k; break
         if not name: name = 'array' if self.constant else 'P' + str(id(self))[-3:]
         return f"{name}{list(self.shape) if self.ndim else '(%s)' % self.item()}"    
     
