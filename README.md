@@ -30,7 +30,7 @@ x(<3>, variable)  # the first item is the shape of the Param, the second is its 
 array([0., 0., 1.])
 >>> x.zero_grad(); x.grad
 0
->>> x.sum().backward()
+>>> list(x.sum().backward())
 [x(<3>, trainable), P904(6.0, variable)]
 >>> x.grad
 array([1., 1., 1.])

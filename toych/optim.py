@@ -16,12 +16,11 @@ class Optimizer(AbstractFunction):
 
     def apply(self, parameters):
         for param in parameters:
-            assert isinstance(param, Param)
+            assert isinstance(param, Param) and not param.constant
             if not param.grad_clean:
-                if param.trainable:
-                    param += self.delta(param)
-                    if self.decay:
-                        param -= self.lr * self.lamb * self.decay_term(param)
+                param += self.delta(param)
+                if self.decay:
+                    param -= self.lr * self.lamb * self.decay_term(param)
                 param.zero_grad()
 
     @abstractmethod

@@ -63,7 +63,7 @@ class dropout(UnaryOp):
     cache = False
     def apply(self, x, p=0.5, mask=None):
         if not Param.training:
-            self.deriv = 1
+            self.deriv = 1.
             return x
         if mask is None:
             sample = np.random.rand(*np.shape(x))
@@ -294,7 +294,7 @@ class Conv2D(Operation):
     def build(self, input):
         self.c_in = input.shape[1]
         self.filters = Param(size=[self.c_out, self.c_in, *self.size])
-        self.bn = BatchNorm2D() if self.bn else None
+        self.bn = Normalize2D() if self.bn else None
         self.built = True
         
     def update_args(self, input):  # returns the args passed to "self.apply"
@@ -434,5 +434,5 @@ class normalize(Function):
         else:
             return x
 
-class normalize2d(normalize):
+class Normalize2D(normalize):
     axis = (0, 2, 3)

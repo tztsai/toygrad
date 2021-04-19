@@ -14,7 +14,7 @@ class Param(np.ndarray):
     kinds = dict(constant=0, variable=1, trainable=2)
     rng = np.random.default_rng()
     grad_lim = 100.  # magnitude limit of each element of the gradient
-    auto_name = False  # auto name the Param by the variable name
+    auto_name = False  # auto name the Param by the variable name (unreliable!)
     random_init = 'he'  # method of random initialization
 
     def __new__(cls, value=None, *, size=None, dtype=None, mean=0.,
@@ -45,15 +45,14 @@ class Param(np.ndarray):
             value, size = None, value
         if value is None:  # random initialization
             assert dtype is None
-            if size is None: size = 1
             if scale is None: scale = cls.random_init
-            if type(scale) is str:
-                d_in = size[0] if hasattr(size, '__len__') else size
+            if type(scale) is str and size:
+                d_in = size if isinstance(size, int) else size[0]
                 scale = cls.init_scale(d_in, scale)
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
         else:
             if size is not None:  # fill the value in an array of the given size
-                value = np.full(size, value)
+                value = np.full(size, value, dtype=dtype)
         return np.asarray(value, dtype=dtype).view(cls)
     
     @staticmethod
@@ -69,10 +68,9 @@ class Param(np.ndarray):
             self.__init__(kind='constant')
         
     def __init__(self, value=None, *, kind=None, name=None, **kwds):
-        kind = kind or ('trainable' if value is None else 'variable')
+        if kind is None: kind = 'trainable' if value is None else 'variable'
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
-        self.dtype = super().dtype
         self.name = name
         self._ctx = None
         self._grad = 0 if not self.constant else None
@@ -115,7 +113,7 @@ class Param(np.ndarray):
         
     def backward(self, debugfile=None):
         if not Param.training: return
-        assert not self.constant and self.ndim == 0, 'backprop must start from a scalar variable'
+        assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
         
         stack, visited, params = [[0, self]], {self}, []
         while stack:  # toposort the related params
@@ -136,7 +134,7 @@ class Param(np.ndarray):
                 x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
                 if isinstance(x, Param) and not x.constant: x.grad += g
-        return params  # return parameters for optimization
+        return (p for p in params if p.trainable)  # generate trainable parameters for optimization
     
     def copy(self):
         cp = Param(super().copy(), dtype=self.dtype)
@@ -237,7 +235,7 @@ def registermethod(fn):
     if not isinstance(fn, type): fn = Function(fn)
     def f(*args, **kwds): return fn(*args, **kwds)  # a method needs to be a function
     setattr(Param, name := fn.__name__.lower(), f)
-    if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
+    if name in {'add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem'}:
         setattr(Param, f"__{name}__", f)
         setattr(Param, f"__r{name}__", lambda self, x: f(x, self))
         setattr(Param, f"__i{name}__", lambda self, x: self.assign(f(self, x)))
@@ -305,7 +303,7 @@ class Operation(Function):
     You can choose to provide `self.deriv` in the `apply` method or override
     the `backward` method to directly provide the grads of inputs.
     As an example of `self.deriv`, consider apply(x, y) with x.shape=(2,3) and y.shape=(4,),
-    then `self.deriv.shape` should be (2,3,4), where `self.deriv[i,j,k] = dy[k] / dx[i,j]`.
+    then `self.deriv.shape` should be (2,3,4) with `self.deriv[i,j,k] = dy[k] / dx[i,j]`.
     
     Attributes:
         ndim_in, ndim_out: least num of dims of input(s) and output
