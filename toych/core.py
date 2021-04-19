@@ -13,7 +13,6 @@ class Param(np.ndarray):
     training = True
     kinds = dict(constant=0, variable=1, trainable=2)
     rng = np.random.default_rng()
-    dtype = np.dtype('float64')
     grad_lim = 100.  # magnitude limit of each element of the gradient
     auto_name = False  # auto name the Param by the variable name
     random_init = 'he'  # method of random initialization
@@ -42,11 +41,10 @@ class Param(np.ndarray):
         >>> w = Param(size=[5, 3])
         >>> w is Param(w)
         """
-        if dtype is None: dtype = Param.dtype
-        if type(value) is tuple:
+        if type(value) is tuple:  # a tuple specifies the size instead of value
             value, size = None, value
         if value is None:  # random initialization
-            assert dtype is Param.dtype
+            assert dtype is None
             if size is None: size = 1
             if scale is None: scale = cls.random_init
             if type(scale) is str:
@@ -54,8 +52,8 @@ class Param(np.ndarray):
                 scale = cls.init_scale(d_in, scale)
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
         else:
-            if size is not None:  # fill an array of the given size
-                value = np.full(size, value, dtype=dtype)
+            if size is not None:  # fill the value in an array of the given size
+                value = np.full(size, value)
         return np.asarray(value, dtype=dtype).view(cls)
     
     @staticmethod
@@ -177,9 +175,9 @@ class Param(np.ndarray):
     
     def __repr__(self):
         s = self.simple_repr().replace('[', '(<').replace(']', '>)')
-        return s[:-1] + ', %s%s)' % (
-            next(k for k, v in Param.kinds.items() if v == self.kind),
-            '' if self.dtype is Param.dtype else f', dtype={self.dtype.name}')
+        s_kind = next(k for k, v in Param.kinds.items() if v == self.kind)
+        s_dtype = '' if self.dtype is np.dtype('float') else ', dtype=' + self.dtype.name
+        return f"{s[:-1]}, {s_kind}{s_dtype})"
 
 
 class FunctionMeta(ABCMeta):
