@@ -145,11 +145,16 @@ class MatMul(Operation):
         return [g.reshape(x.shape) for x, g in zip(self.inputs, grads)]
 
 class reshape(Operation):
-    def apply(self, x, shape):
-        return x.reshape(shape)
+    def apply(self, x, *args):
+        if all(type(a) is int for a in args):
+            shape = args
+        else:
+            assert len(args) == 1
+            shape = args[0]
+        return np.reshape(x, shape)
 
     def backward(self, grad_y):
-        yield grad_y.reshape(self._x.shape)
+        yield grad_y.reshape(np.shape(self._x))
 
 class transpose(Operation):
     def apply(self, x, order=None):
@@ -255,7 +260,13 @@ def flatten(x):
 
 
 ### other functions ###
- 
+
+def zeros(*shape, kind='variable', dtype=float):
+    return Param(np.zeros(shape, dtype=dtype), kind=kind)
+
+def ones(*shape, kind='variable', dtype=float):
+    return Param(np.ones(shape, dtype=dtype), kind=kind)
+
 class Pool2D(Function):
     register = True
     partial = True

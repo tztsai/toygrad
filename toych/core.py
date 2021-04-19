@@ -45,8 +45,9 @@ class Param(np.ndarray):
             value, size = None, value
         if value is None:  # random initialization
             assert dtype is None
-            if scale is None: scale = cls.random_init
-            if type(scale) is str and size:
+            if size is None: scale = 1.
+            elif scale is None: scale = cls.random_init
+            if type(scale) is str:
                 d_in = size if isinstance(size, int) else size[0]
                 scale = cls.init_scale(d_in, scale)
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
