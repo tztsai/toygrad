@@ -8,9 +8,9 @@ to "tinygrad" (https://github.com/geohot/tinygrad).
 
 There can be 3 ways to apply a function or operation:
 >>> x = Param(size=[5, 3])
->>> dropout(x, 0.3)             # available to any Function
->>> x.dropout(0.3)              # if the function has been registered
->>> d = dropout(0.3); d(x)      # if the function is partial
+>>> dropout(x, 0.3)                          # available to any Function
+>>> x.dropout(0.3)                           # if the function has been registered
+>>> a, d = Affine(8), dropout(0.3); d(a(x))  # if the function is partial or contains __init__ method
 """
 import numpy as np
 from .core import Param, Function, Operation, registermethod
