@@ -6,14 +6,14 @@ from .utils.dev import *
 class Param(np.ndarray):
     """ A parameter in the toych model.
     There are three kinds of Param objects:
-    - constant: does not take part in the autograd
+    - constant: does not participate in the autograd
     - variable: passes gradients during the autograd but cannot be trained
     - trainable: stores an array of gradients and can be trained by the optimizer
     """
     training = True
     kinds = dict(constant=0, variable=1, trainable=2)
     rng = np.random.default_rng()
-    dtype = np.float
+    dtype = np.dtype('float64')
     grad_lim = 100.  # magnitude limit of each element of the gradient
     auto_name = False  # auto name the Param by the variable name
     random_init = 'he'  # method of random initialization
@@ -23,6 +23,8 @@ class Param(np.ndarray):
         """
         If `value` is given, then it will be converted to a Param.
         The default `kind` in this case is "variable".
+        If the first argument is a tuple, then it will be considered as `size`
+        instead of `value`, i.e. `Param((...))` is equivalent to `Param(size=(...))`.
         If `dtype` is the same as that of the given `value`, then a view of
         `value` will be returned, so its data will not be copied.
         However, if `size` is additionally specified, then a new Param
@@ -40,8 +42,11 @@ class Param(np.ndarray):
         >>> w = Param(size=[5, 3])
         >>> w is Param(w)
         """
-        if dtype is None: dtype = cls.dtype
+        if dtype is None: dtype = Param.dtype
+        if type(value) is tuple:
+            value, size = None, value
         if value is None:  # random initialization
+            assert dtype is Param.dtype
             if size is None: size = 1
             if scale is None: scale = cls.random_init
             if type(scale) is str:
@@ -69,8 +74,8 @@ class Param(np.ndarray):
         kind = kind or ('trainable' if value is None else 'variable')
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
+        self.dtype = super().dtype
         self.name = name
-        self.dtype = self.data.dtype
         self._ctx = None
         self._grad = 0 if not self.constant else None
 
@@ -88,7 +93,7 @@ class Param(np.ndarray):
         
     @property
     def grad_clean(self):
-        return self.constant or id(self.grad) == id(0)
+        return id(self.grad) in [id(0), id(None)]
 
     def zero_grad(self):
         if not self.constant: self._grad = 0
@@ -103,16 +108,12 @@ class Param(np.ndarray):
     def data(self): return np.asarray(self)
 
     def view(self, *args):
-        if not args:
-            return Param(self, dtype=self.dtype, kind=self.kind)
-        else:
-            return super().view(*args)
+        if not args: return Param(self, dtype=self.dtype, kind=self.kind)
+        else: return super().view(*args)
         
     def assign(self, par):
-        if self.shape:
-            self[:] = par; return self
-        else:
-            return par
+        if self.shape: self[:] = par; return self
+        else: return par
         
     def backward(self, debugfile=None):
         if not Param.training: return
@@ -145,12 +146,10 @@ class Param(np.ndarray):
         return cp
     
     def __getattr__(self, name):
-        if name in Param.kinds:
-            return self.kind == Param.kinds[name]
+        if name in Param.kinds: return self.kind == Param.kinds[name]
         return super().__getattribute__(name)
 
-    def __hash__(self):
-        return id(self)
+    def __hash__(self): return id(self)
 
     def __reduce__(self):
         """Used for pickling the Param object."""
@@ -180,8 +179,7 @@ class Param(np.ndarray):
         s = self.simple_repr().replace('[', '(<').replace(']', '>)')
         return s[:-1] + ', %s%s)' % (
             next(k for k, v in Param.kinds.items() if v == self.kind),
-            '' if self.dtype is Param.dtype else f', dtype={self.dtype.__name__}'
-        )
+            '' if self.dtype is Param.dtype else f', dtype={self.dtype.name}')
 
 
 class FunctionMeta(ABCMeta):
@@ -236,11 +234,10 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
     def __repr__(self):
         return self.__name__
     
-    
 def registermethod(fn):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
     if not isinstance(fn, type): fn = Function(fn)
-    def f(*args, **kwds): return fn(*args, **kwds)  # convert to a function
+    def f(*args, **kwds): return fn(*args, **kwds)  # a method needs to be a function
     setattr(Param, name := fn.__name__.lower(), f)
     if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
         setattr(Param, f"__{name}__", f)
@@ -257,7 +254,6 @@ def wrap_call(call):
         return output
     return wrapper
 
-
 class Function(AbstractFunction):
     """ Baseclass of functions applied to Params.
     The class is directly callable like functions.
@@ -268,7 +264,7 @@ class Function(AbstractFunction):
         partial: whether this function contains params to be initialized
         register: whether to register this function as a method of the Param class
     """
-    blackbox = logLevel != DEBUG
+    blackbox = logLevel != DEBUG  # as a blackbox when not debugging
     register = False
     partial = False
 
@@ -279,8 +275,7 @@ class Function(AbstractFunction):
         return fn.decide_call(*args, **kwds)
 
     def decide_call(self, *args, **kwds):
-        self.wait_inputs = ((self.partial or self.need_init) and
-                            not array_at_first(args))
+        self.wait_inputs = (self.partial or self.need_init) and not array_at_first(args)
         return self if self.wait_inputs else self(*args, **kwds)
     
     def __init__(self, *args, **kwds):
@@ -306,7 +301,6 @@ class Function(AbstractFunction):
     def __call__(self, *args, **kwds):
         return super().__call__(*args, **kwds)
     __call__ = wrap_call(__call__)
-    
 
 class Operation(Function):
     """ Baseclass of Param operations with automatic differentiation.
@@ -334,8 +328,7 @@ class Operation(Function):
                 grad_y = np.expand_dims(grad_out, tuple(range(-xdim-ydim, -ydim)))
                 grad = np.sum(grad_y * dy_dx, axis=tuple(range(-ydim, 0)))
                 yield self.debroadcast(x, xdim, grad)
-            else:
-                yield None
+            else: yield None
 
     def debroadcast(self, input, ndim_in, grad):
         def split_tail(l, k):
@@ -356,18 +349,15 @@ class Operation(Function):
         return grad.reshape(np.shape(input))
     
     @classmethod
-    def manage_cache(cls, key, func, args, kwds):
+    def handle_cache(cls, key, func, args, kwds):
         if cls.cache:
-            if key in (cache := cls._cache):
-                return 0, cache[key]
-            else:
-                return 1, func(*args, **kwds), cache
-        else:
-            return 2, func(*args, **kwds)
+            if key in (cache := cls._cache): return 0, cache[key]
+            else: return 1, func(*args, **kwds), cache
+        else: return 2, func(*args, **kwds)
         
     @classmethod
     def log_cache_hits(cls):
-        dbg('%d cache hits of %s', cls._cache._cnt, cls)
+        if cls._cache._cnt: dbg('%d cache hits of %s', cls._cache._cnt, cls)
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
@@ -393,7 +383,7 @@ class Operation(Function):
             setattr(self, '_'+name, val)  # store inputs for backward
 
         key = tuple((k, id(v)) for k, v in binds.items())
-        ret = self.manage_cache(key, super(Function, self).__call__, args, kwds)
+        ret = self.handle_cache(key, super(Function, self).__call__, args, kwds)
         if ret[0] == 0:  # inputs in cache
             output, other = ret[1]
             output = output.view()
