@@ -147,7 +147,7 @@ class ResNet(Compose):
         34: ((64, 3), (128, 4), (256, 6), (512, 3))
     }
     
-    class ResBlock(Model):
+    class Block(Model):
         def __init__(self, c_in, c_out, size):
             self.f = Compose(
                 Conv2D(c_out, size),
@@ -155,12 +155,12 @@ class ResNet(Compose):
                 Conv2D(c_out, size),
             )
             if c_in == c_out:
-                self.identity = lambda x: x
+                self.res = lambda x: x
             else:
-                self.identity = Conv2D(c_out, 1)
+                self.res = Conv2D(c_out, 1)
             
         def apply(self, input):
-            return (self.f(input) + self.identity(input)).relu()
+            return (self.f(input) + self.res(input)).relu()
             
     def __init__(self, layers):
         if layers in self.config:
@@ -169,13 +169,13 @@ class ResNet(Compose):
             raise ValueError('ResNet of %d layers is not available' % layers)
         
         c_outs = [c_out for c_out, n_blocks in structure for _ in range(n_blocks)]
-        c_in_c_outs = zip(c_outs, [None] + c_outs)
+        c_in_c_outs = zip([None] + c_outs, c_outs)
         
         head = Compose(
             Conv2D(64, 7, stride=2), ReLU, MaxPool2D(size=(3, 3))
         )
         body = Compose(*[
-            self.ResBlock(c_in, c_out, 3)
+            ResNet.Block(c_in, c_out, 3)
             for c_in, c_out in c_in_c_outs
         ])
         tail = Compose(MeanPool2D(size=(2, 2)), Affine(10))
@@ -202,4 +202,3 @@ class LSTM(Model):
         self.c = self.c*f + i*c     # update
         self.h = o * tanh(self.c)
         return o
-        

@@ -1,5 +1,5 @@
 import itertools
-from toych import *
+from importer import *
 
 Param.rng = np.random
 np.random.seed(0)
@@ -78,9 +78,9 @@ if __name__ == '__main__':
         Affine(64), normalize(),
         leakyReLU, fixed_dropout(),
         Affine(5)
-    ); model2(x)
+    ); model2(x2)
     
-    dropout = fixed_dropout()
+    dp = fixed_dropout()
 
     for line in '''
     w: (x @ w).sigmoid().sum()
@@ -96,7 +96,7 @@ if __name__ == '__main__':
     w: (x @ w).max(axis=1).sum()
     w: (w.maximum(w2[:3])).mean()
     w2: (w * w.maximum(w2[:3])).mean()
-    w: (dropout(w) + dropout(w*2)).sum()
+    w: (dp(w) + dp(w*2)).sum()
     w: w.softmax().log().mean()
     w2: w2.concat(w3).tanh().sum()
     w3: w2.concat(w3).tanh().sum()
@@ -127,8 +127,8 @@ if __name__ == '__main__':
     k: (im.conv2d(k, stride=2).reshape([2, -1]) @ fc).smce(y2)
     k: [setattr(C, 'filters', k), C(im).flatten().mean()][1]
     '''.strip().splitlines():
-        par, exp = line.split(':', 1)
-        print('checking grad of "%s"' % par.strip(), 'wrt\n ', exp.strip())
-        cost = eval(f'lambda {par}: eval(exp)')
+        par, expr = line.split(':', 1)
+        print('checking grad of "%s"' % par.strip(), 'wrt\n ', expr.strip())
+        cost = eval(f'lambda {par}: eval(expr)')
         checkgrad(eval(par), cost)
         print('OK!')

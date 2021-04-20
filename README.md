@@ -73,17 +73,23 @@ array([...])
 
 "Let's have some SGD! 😁"
 >>> y = tc.utils.onehot(np.random.randint(3, size=10), k=3)  # OK to directly use numpy arrays
->>> e = (x @ w + b).smce(y)  # softmax cross-entropy
+>>> e = (x @ w + b).smce(y); e  # softmax cross-entropy
+e(1.03, variable)
 >>> tc.utils.graph.show_compgraph(e)  # see the graph below
 <graphviz.dot.Digraph object at ...>
 >>> def SGD(pars):
         for p in pars:
-            if p.trainable:
-                p -= 1e-3 * p.grad
+            p -= 1e-3 * p.grad
             p.zero_grad()
->>> SGD(e.backward())
+>>> pars = list(e.backward()); pars
+[b(<3>, trainable), w(<4, 3>, trainable)]
+>>> SGD(pars)
+```
 
-"More Param functions!"
+![A simple computation graph](compgraph.png)
+
+```python
+"More about Param functions."
 >>> z.data
 array([[666, 999,   1],
        [  0,   1,   0],
@@ -134,6 +140,7 @@ normalize()  # now it is a function containing trainable weight and bias
 
 "Compose several functions to build a neural network!"
 >>> from toych.func import *
+>>> from toych.optim import Adam
 >>> nn = tc.model.Compose(
         Conv2D(32, size=(5, 5), stride=2),
         Conv2D(64, size=(5, 5), stride=2),
@@ -146,14 +153,18 @@ normalize()  # now it is a function containing trainable weight and bias
         dropout(0.2), ReLU,
         Affine(10), softmax
     )
->>> pred = nn(imgs)  # quite slow!
-pred(<100, 10>, variable)
->>> y = tc.utils.onehot(np.random.randint(10, size=100), 10)
->>> loss = pred.crossentropy(y)
->>> SGD(loss.backward())
-```
+>>> labels = tc.utils.onehot(np.random.randint(10, size=100), 10)
+>>> optimizer = Adam()  # no need to pass in Params when init
+>>> nn(imgs)  # quite slow!
+P215(<100, 10>, variable)
+>>> for epoch in range(10):
+        preds = nn(imgs)
+        loss = preds.crossentropy(labels)
+        optimizer(loss.backward())
 
-![A simple computation graph](compgraph.png)
+"Or simply use the `fit` method of a Model."
+>>> nn.fit(imgs, labels, epochs=10, optimizer=optimizer, loss='crossentropy')
+```
 
 ## TODO
 

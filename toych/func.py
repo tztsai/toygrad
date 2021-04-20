@@ -87,12 +87,17 @@ class Mul(BinaryOp):
     
 class TrueDiv(BinaryOp):
     def apply(self, x, y):
-        self.deriv = 1/y, -x/y**2
+        py = self.inputs[1]
+        if isinstance(py, Param) and not py.constant:
+            self.deriv = 1/y, -x/y**2
+        else:
+            self.deriv = 1/y, None
         return x / y
 
 class Pow(BinaryOp):
     def apply(self, x, y):
-        if isinstance(y, Param) and not y.constant:
+        py = self.inputs[1]
+        if isinstance(py, Param) and not py.constant:
             self.deriv = y * x**(y-1), x**y * np.log(x)
         else:
             self.deriv = y * x**(y-1), None
@@ -119,13 +124,13 @@ class softmax(Operation):
 class smce(Operation):
     """Softmax Crossentropy"""
     ndim_in, ndim_out = (1, 1), 0
-    def apply(self, out, target):
-        if isinstance(out, Param): assert out.constant
-        sample_ids = random.sample(range(len(out)), min(10, len(out)))
-        assert all(np.sum(target[sample_ids], axis=1) == 1.)
-        probabs = (ex := np.exp(out)) / np.sum(ex, axis=-1, keepdims=True)
-        e = -np.sum(target * np.log(probabs), axis=-1)
-        self.deriv = (probabs - target) / e.size, None
+    def apply(self, input, labels):
+        assert not isinstance(y := self.inputs[1], Param) or y.constant
+        sample_ids = random.sample(range(len(input)), min(10, len(input)))
+        assert all(np.sum(labels[sample_ids], axis=1) == 1.)  # sanity check
+        probabs = (ex := np.exp(input)) / np.sum(ex, axis=-1, keepdims=True)
+        e = -np.sum(labels * np.log(probabs), axis=-1)
+        self.deriv = (probabs - labels) / e.size, None
         return e.mean()
 
 
@@ -278,7 +283,7 @@ class Pool2D(Function):
     def pool2d(im, py, px, st=1):
         (dy, ry), (dx, rx) = divmod(im.shape[-2], py*st), divmod(im.shape[-1], px*st)
         pools = im[:, :, :im.shape[-2]-ry:st, :im.shape[-1]-rx:st]
-        return pools.reshape(shape=(*im.shape[:-2], dy, py, dx, px))
+        return pools.reshape(*im.shape[:-2], dy, py, dx, px)
     
     @staticmethod
     def reduce(pools, axis):
@@ -296,10 +301,10 @@ class MaxPool2D(Pool2D):
 class Conv2D(Operation):
     cache = False
     
-    def __init__(self, c_out, size, stride=1, groups=1, batchnorm=False):
+    def __init__(self, c_out, size, stride=1, groups=1, normalize=False):
         if type(size) is int: size = (size, size)
         self.c_in, self.c_out = None, c_out
-        self.size, self.stride, self.groups, self.bn = size, stride, groups, batchnorm
+        self.size, self.stride, self.groups, self.bn = size, stride, groups, normalize
         self.built = False
 
     def build(self, input):
@@ -322,58 +327,60 @@ class Conv2D(Operation):
     def apply(self, input, filters, stride=1, groups=1):
         if type(stride) is int:
             self._stride = stride = (stride, stride)
-        x, w = input, filters
-        cout, cin, H, W = w.shape
-        ys, xs = stride
-        bs = len(x)
-        oy, ox = (x.shape[2]-(H-ys))//ys, (x.shape[3]-(W-xs))//xs
-        assert cin * groups == x.shape[1]
-        assert cout % groups == 0
-        rcout = cout // groups
 
-        gx = x.reshape(bs, groups, cin, x.shape[2], x.shape[3])
+        bs, ims, ih, iw = input.shape
+        c_out, c_in, fh, fw = filters.shape
+        c_out //= groups
+        ys, xs = stride
+        oh, ow = (ih - fh) // ys + 1, (iw - fw) // xs + 1
+        assert ims == c_in * groups
+        assert c_out * groups == filters.shape[0]
+
+        tf = filters.reshape(groups, c_out, c_in, fh, fw)
+        gx = input.reshape(bs, groups, c_in, ih, iw)
         tx = np.lib.stride_tricks.as_strided(gx,
-            shape=(bs, groups, cin, oy, ox, H, W),
-            strides=(*gx.strides[0:3], gx.strides[3]*ys, gx.strides[4]*xs, *gx.strides[3:5]),
+            shape=(bs, groups, c_in, oh, ow, fh, fw),
+            strides=(*gx.strides[:3], gx.strides[3]*ys, gx.strides[4]*xs, *gx.strides[3:]),
             writeable=False,
         )
-        tw = w.reshape(groups, rcout, cin, H, W)
 
-        ret = np.zeros((bs, groups, oy, ox, rcout), dtype=x.dtype)
+        out = np.zeros((bs, groups, oh, ow, c_out), dtype=input.dtype)
         for g in range(groups):
-            # ijYXyx,kjyx -> iYXk ->ikYX
-            ret[:, g] += np.tensordot(tx[:, g], tw[g], ((1, 4, 5), (1, 2, 3)))
+            out[:, g] += np.tensordot(tx[:, g], tf[g], ((1, 4, 5), (1, 2, 3)))
             
-        self._tx, self._tw, self._xsh = tx, tw, x.shape
-        return np.moveaxis(ret, 4, 2).reshape(bs, cout, oy, ox)
+        self._tx, self._tf, self._xsh, self._fsh = tx, tf, input.shape, filters.shape
+        return np.moveaxis(out, 4, 2).reshape(bs, -1, oh, ow)
 
-    def backward(self, grad_y):
-        stride, groups = self._stride, self._groups
-        tx, tw, x_shape = self._tx, self._tw, self._xsh
-
-        bs, _, oy, ox = grad_y.shape
-        _, rcout, cin, H, W = tw.shape
-        ys, xs = stride
-        ggg = grad_y.reshape(bs, groups, rcout, oy, ox)
-
-        gdw = np.zeros((groups, rcout, cin, H, W), dtype=tx.dtype)
+    def backward(self, grad_out):
+        tx, tf = self._tx, self._tf
+        bs, _, ih, iw = self._xsh
+        _, _, oh, ow = grad_out.shape
+        groups, c_out, c_in, fh, fw = tf.shape
+        ys, xs = self._stride
+        groups = self._groups
+        
+        gy = grad_out.reshape(bs, groups, c_out, oh, ow)
+        gf = np.zeros(tf.shape)
+        # gf = np.zeros((groups, c_out, c_in, fh, fw), dtype=tx.dtype)
         for g in range(groups):
-            #'ikYX,ijYXyx -> kjyx'
-            gdw[g] += np.tensordot(ggg[:, g], tx[:, g], ((0, 2, 3), (0, 2, 3)))
+            gf[g] += np.tensordot(gy[:, g], tx[:, g], ((0, 2, 3), (0, 2, 3)))
+        gf = gf.reshape(self._fsh)
 
-        # needs to be optimized
-        OY, OX = x_shape[2:4]
-        gdx = np.zeros((bs, groups, cin, OY, OX), dtype=tx.dtype)
-        for k in range(oy*ox):
-            Y, X = k//ox, k % ox
-            iY, iX = Y*ys, X*xs
-            #gdx[:,:,: , iY:iY+H, iX:iX+W] += np.einsum('igk,gkjyx->igjyx', ggg[:,:,:,Y,X], tw)
-            for g in range(groups):
-                tg = np.dot(ggg[:, g, :, Y, X].reshape(
-                    bs, -1), tw[g].reshape(rcout, -1))
-                gdx[:, g, :, iY:iY+H, iX:iX+W] += tg.reshape((bs, cin, H, W))
-
-        return gdx.reshape((bs, groups*cin, OY, OX)), gdw.reshape((groups*rcout, cin, H, W))
+        if isinstance(ims := self.inputs[0], Param) and not ims.constant:
+            # needs to be optimized
+            gx = np.zeros((bs, groups, c_in, ih, iw))
+            for k in range(oh * ow):
+                i, j = divmod(k, ow)
+                si, sj = i * ys, j * xs
+                #gdx[:,:,: , iY:iY+H, iX:iX+W] += np.einsum('igk,gkjyx->igjyx', ggg[:,:,:,Y,X], tw)
+                for g in range(groups):
+                    tg = np.dot(gy[:, g, :, i, j].reshape(bs, -1), tf[g].reshape(c_out, -1))
+                    gx[:, g, :, si:si+fh, sj:sj+fw] += tg.reshape((bs, c_in, fh, fw))
+            gx = gx.reshape(self._xsh)
+        else:
+            gx = None
+            
+        return gx, gf
 
 class Affine(Function):
     def __init__(self, d_out, with_bias=True):

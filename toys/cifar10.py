@@ -1,47 +1,41 @@
+#%%
 import pickle
-from toych import *
+import random
+import numpy as np
+import importer
+from functools import partial
+from toych.model import ResNet
+from toych.utils import standardize, onehot
 
+#%%
+DATAPATH = 'data/cifar10/'
 
-(x_tr, y_tr), (x_ts, y_ts) = pickle.load(open('../data/cifar-10.pkl', 'rb'), encoding='bytes')
-x_tr, x_ts = [x.reshape(-1, 3, 32, 32) for x in [x_tr, x_ts]]
-(x_tr, y_tr), (x_va, y_va) = train_val_split(x_tr, y_tr)
+def load_data_batch(filename):
+    with open(DATAPATH + filename, 'rb') as fo:
+        data = pickle.load(fo, encoding='bytes')
+    return tuple(np.asarray(data[k]) for k in
+                 [b'data', b'labels'])
 
+def train_val_split(inputs, labels, ratio=0.8):
+    N = len(inputs)
+    idx = random.sample(range(N), int(ratio*N))
+    itr = np.zeros(N, dtype=bool)
+    itr[idx] = 1
+    return (inputs[itr], labels[itr]), (inputs[~itr], labels[~itr])
 
-def CNN1(classes):
-    ker1 = Param(size=[32, 3, 5, 5])
-    ker2 = Param(size=[64, 32, 3, 3])
-    fc = Affine(classes)
+def perprocess(*datasets):
+    return [ims.reshape(-1, 3, 32, 32) for ims in standardize(*datasets)]
     
-    def forward(imgs):
-        imgs = Param(imgs, kind='constant')
-        h1 = imgs.conv2d(ker1, stride=2).relu()
-        h2 = h1.conv2d(ker2, stride=2).relu()
-        return fc(h2.flatten()).softmax()
-        
-    return Model(forward)
+#%%
+xs, ts = zip(*[load_data_batch(f'data_batch_{i+1}') for i in range(5)])
+x_tr, t_tr = np.vstack(xs), np.hstack(ts)
+(x_tr, t_tr), (x_va, t_va) = train_val_split(x_tr, t_tr, ratio=0.9)
+x_ts, t_ts = load_data_batch('test_batch')
 
-def CNN2(classes):
-    return Compose(
-        Conv2D(32, size=5, stride=2), ReLU,
-        Conv2D(64, size=3, stride=2), ReLU,
-        flatten, Affine(classes), softmax
-    )
+x_tr, x_va, x_ts = perprocess(x_tr, x_va, x_ts)
+t_tr, t_va, t_ts = map(partial(onehot, k=len(set(t_tr))), [t_tr, t_va, t_ts])
 
-class CNN3(Model):
-    def __init__(self, classes):
-        self.conv1 = Conv2D(32, 5, stride=2)
-        self.conv2 = Conv2D(64, 5, stride=2)
-        self.fc = Affine(classes)
-        
-    def apply(self, imgs):
-        h1 = self.conv1(imgs).relu()
-        h2 = self.conv2(h1).relu()
-        return self.fc(h2.flatten()).softmax()
+#%%
+nn = ResNet(18)
 
-
-clf1, clf2, clf3 = CNN1(10), CNN2(10), CNN3(10)
-
-# for clf in [clf1, clf2, clf3]:
-#     clf1.fit(x_tr, y_tr, epochs=2, loss='crossentropy',
-#              val_data=(x_va, y_va), metrics={'val_acc': accuracy})
-
+nn.fit(x_tr, t_tr, epochs=10, lr=8e-3, loss='smce')
