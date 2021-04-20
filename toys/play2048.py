@@ -131,7 +131,7 @@ for eps in (pb := pbar(range(EPISODES), unit='eps')):
         if play_mode == 'agent':
             action = agent.select_action(old_obs := obs)
             obs, reward, done, info = env.step(action)
-            if done: reward = 128
+            if done: reward = -128
             agent.memory.push(old_obs, action, reward, obs)
             obs_record.append(obs)
         else:

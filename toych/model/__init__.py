@@ -15,9 +15,8 @@ class Model(AbstractFunction):
     def apply(self, *args, **kwds):
         raise NotImplementedError
     
-    def fit(self, input, target, *, epochs=20, lr=None, bs=None,
-            optimizer='adam', loss='l2', val_data=None,
-            metrics={}, callbacks=()) -> dict:
+    def fit(self, input, target, *, epochs=20, lr=None, bs=None, optimizer='adam',
+            loss='l2', val_data=None, metrics={}, callbacks=()) -> dict:
         """ Given the input data, train the parameters to fit the target data.
 
             Args:
@@ -64,16 +63,15 @@ class Model(AbstractFunction):
                 loss += e
 
             history['loss'].append(loss / batches.size)
-                
-            if val_data:
-                x_val, t_val = val_data
-                with Param.not_training():
-                    y_val = self(x_val)
-                metrics['val_loss'] = loss_func
-                for name, metric in metrics.items():
-                    history[name].append(metric(y_val, t_val))
-                    
+
             with Param.not_training():
+                if val_data:
+                    x_val, t_val = val_data
+                    with Param.not_training():
+                        y_val = self(x_val)
+                    metrics['val_loss'] = loss_func
+                    for name, metric in metrics.items():
+                        history[name].append(metric(y_val, t_val))
                 for callback in callbacks:
                     callback(**locals())
 
@@ -143,28 +141,25 @@ class Compose(Model):
         return output
 
 
-class ResNet(Model):
+class ResNet(Compose):
     config = {
         18: ((64, 2), (128, 2), (256, 2), (512, 2)),
         34: ((64, 3), (128, 4), (256, 6), (512, 3))
     }
     
-    class ResBlock(Function):
-        def __init__(self, channels, size):
+    class ResBlock(Model):
+        def __init__(self, c_in, c_out, size):
             self.f = Compose(
-                Conv2D(channels, size),
+                Conv2D(c_out, size),
                 ReLU,
-                Conv2D(channels, size),
+                Conv2D(c_out, size),
             )
-            self.channels = channels
-            self.identity = NotImplemented
+            if c_in == c_out:
+                self.identity = lambda x: x
+            else:
+                self.identity = Conv2D(c_out, 1)
             
         def apply(self, input):
-            if self.identity is NotImplemented:
-                if input.shape[1] != self.channels:
-                    self.identity = Conv2D(self.channels, 1)
-                else:
-                    self.identity = lambda x: x
             return (self.f(input) + self.identity(input)).relu()
             
     def __init__(self, layers):
@@ -173,17 +168,19 @@ class ResNet(Model):
         else:
             raise ValueError('ResNet of %d layers is not available' % layers)
         
+        c_outs = [c_out for c_out, n_blocks in structure for _ in range(n_blocks)]
+        c_in_c_outs = zip(c_outs, [None] + c_outs)
+        
         head = Compose(
             Conv2D(64, 7, stride=2), ReLU, MaxPool2D(size=(3, 3))
         )
         body = Compose(*[
-            self.ResBlock(c_out, 3)
-            for c_out, n_blocks in structure
-            for _ in range(n_blocks)
+            self.ResBlock(c_in, c_out, 3)
+            for c_in, c_out in c_in_c_outs
         ])
         tail = Compose(MeanPool2D(size=(2, 2)), Affine(10))
         
-        self.apply = Compose(head, body, tail)
+        super().__init__(head, body, tail)
 
 
 class LSTM(Model):
@@ -204,6 +201,5 @@ class LSTM(Model):
         c = tanh(wc(x) + uc(h))     # candidate
         self.c = self.c*f + i*c     # update
         self.h = o * tanh(self.c)
-        setparnames()
         return o
         

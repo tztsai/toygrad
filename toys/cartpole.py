@@ -7,9 +7,9 @@ del sum, max
 
 env = gym.make('CartPole-v1')
 
-class Agent(Model):
+class Agent(Compose):
     def __init__(self, dim_out):
-        self.apply = Compose(
+        super().__init__(
             Affine(32), dropout(), leakyReLU,
             Affine(4), leakyReLU,
             Affine(dim_out), softmax

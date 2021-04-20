@@ -18,11 +18,10 @@ def onehot(x, k, *, cold=0, hot=1):
         m[idx][x[idx]] = hot
     return m
 
-def standardize(x_tr, *x_ts):
+def standardize(x_tr, *x_ts, eps=1e-5):
     m = x_tr.mean(axis=0)
-    sd = x_tr.std(axis=0)
-    if np.isclose(sd, 0): sd = 1.
-    xs = [(x-m)/sd for x in (x_tr, *x_ts)]
+    var = x_tr.var(axis=0)
+    xs = [(x - m) / np.sqrt(var + eps) for x in (x_tr, *x_ts)]
     return xs[0] if not x_ts else xs
 
 def train_val_split(inputs, labels, ratio=0.8):
@@ -76,9 +75,8 @@ def setparnames(**bindings):
     if not bindings:
         bindings = inspect.stack()[1].frame.f_locals
     for name, par in bindings.items():
-        if np.shape(par) and name[0] != '_':
-            try: par.name = name
-            except: pass
+        if type(par).__name__ == 'Param':
+            par.name = name
 
 def makegif(frames, filename='__tmp__.gif', blit=True, fps=60, **kwds):
     fig, ax = plt.subplots()

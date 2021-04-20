@@ -8,7 +8,7 @@ class Param(np.ndarray):
     There are three kinds of Param objects:
     - constant: does not participate in the autograd
     - variable: passes gradients during the autograd but cannot be trained
-    - trainable: stores an array of gradients and can be trained by the optimizer
+    - trainable: stores an array of gradients and can be updated by the optimizer
     """
     training = True
     kinds = dict(constant=0, variable=1, trainable=2)
@@ -131,7 +131,7 @@ class Param(np.ndarray):
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
             assert not y.grad_clean
-            with ProfileOp(ctx, backward=True):
+            with Profile(ctx, backward=True):
                 x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
                 if isinstance(x, Param) and not x.constant: x.grad += g
@@ -222,7 +222,7 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
         return args, kwds
         
     def __call__(self, *args, **kwds):
-        with ProfileOp(self):
+        with Profile(self):
             output = self.apply(*args, **kwds)
         if isinstance(output, Param) and self.blackbox:
             output._outer_ctx = self

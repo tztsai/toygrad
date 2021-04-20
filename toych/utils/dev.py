@@ -17,7 +17,7 @@ from typing import Union, Optional, List, Tuple
 from abc import ABC, ABCMeta, abstractmethod
 
 
-class ProfileOp:
+class Profile:
     debug_counts, debug_times = defaultdict(int), defaultdict(float)
 
     @classmethod
@@ -38,7 +38,7 @@ class ProfileOp:
         self.debug_times[self.name] += et
         dbg(f"{self.name:>20} : {et:>7.2f} ms")
 
-atexit.register(ProfileOp.print_debug_exit)
+atexit.register(Profile.print_debug_exit)
 
 
 class LogFormatter(logging.Formatter):
