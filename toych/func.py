@@ -3,7 +3,7 @@ Inherit from Operation to add differentiable operations (deriv or backward must 
 Functions are automatically differentiable due to these basic operations.
 Decorate a function using `registermethod` to register it as a method of the Param class.
 
-Implementations of sum, max, reshape, transpose, Pool2D, BatchNorm2D, Conv2D, etc. have referred
+Implementations of sum, max, reshape, transpose, Pool2D, BatchNorm2D, conv2D, etc. have referred
 to "tinygrad" (https://github.com/geohot/tinygrad).
 
 There can be 3 ways to apply a function or operation:
@@ -47,7 +47,7 @@ class abs(UnaryOp):
         self.deriv = np.sign(x)
         return np.abs(x)
     
-class ReLU(UnaryOp):
+class reLU(UnaryOp):
     def apply(self, x):
         self.deriv = (x >= 0.)
         return np.maximum(x, 0.)
@@ -121,8 +121,7 @@ class softmax(Operation):
         self.deriv = y_col * (I - y_row)
         return y
 
-class smce(Operation):
-    """Softmax Crossentropy"""
+class softmaxCrossentropy(Operation):
     ndim_in, ndim_out = (1, 1), 0
     def apply(self, input, labels):
         assert not isinstance(y := self.inputs[1], Param) or y.constant
@@ -132,6 +131,8 @@ class smce(Operation):
         e = -np.sum(labels * np.log(probabs), axis=-1)
         self.deriv = (probabs - labels) / e.size, None
         return e.mean()
+
+setattr(Param, 'smce', softmaxCrossentropy)  # set a shorter alias
 
 
 ### operations that overrides the `backward` method ###
@@ -272,7 +273,7 @@ def zeros(*shape, kind='variable', dtype=float):
 def ones(*shape, kind='variable', dtype=float):
     return Param(np.ones(shape, dtype=dtype), kind=kind)
 
-class Pool2D(Function):
+class pool2D(Function):
     register = True
     partial = True
     
@@ -289,16 +290,16 @@ class Pool2D(Function):
     def reduce(pools, axis):
         raise NotImplementedError
 
-class MeanPool2D(Pool2D):
+class meanPool2D(pool2D):
     reduce = mean
     
-class MaxPool2D(Pool2D):
+class maxPool2D(pool2D):
     reduce = max
     
 
 ### operations or methods containing parameters to be initialized ###
 
-class Conv2D(Operation):
+class conv2D(Operation):
     cache = False
     
     def __init__(self, c_out, size, stride=1, groups=1, normalize=False):
@@ -310,7 +311,7 @@ class Conv2D(Operation):
     def build(self, input):
         self.c_in = input.shape[1]
         self.filters = Param(size=[self.c_out, self.c_in, *self.size])
-        self.bn = Normalize2D() if self.bn else None
+        self.bn = normalize2D() if self.bn else None
         self.built = True
         
     def update_args(self, input):  # returns the args passed to "self.apply"
@@ -382,7 +383,7 @@ class Conv2D(Operation):
             
         return gx, gf
 
-class Affine(Function):
+class affine(Function):
     def __init__(self, d_out, with_bias=True):
         self.d_out = d_out
         self.with_bias = with_bias
@@ -452,5 +453,5 @@ class normalize(Function):
         else:
             return x
 
-class Normalize2D(normalize):
+class normalize2D(normalize):
     axis = (0, 2, 3)

@@ -208,7 +208,16 @@ class FunctionMeta(ABCMeta):
         return super().__reduce__()
 
 class AbstractFunction(ABC, metaclass=FunctionMeta):
-    blackbox = False  # whether this function appears as a single node in the compgraph
+    """ Abstract baseclass of callable classes in toych.
+    The class is directly callable like functions.
+    An instance of it acts as a node in the computation graph.
+    
+    Attributes:
+        register: whether to register this function as a method of the Param class
+        blackbox: whether this appears as a single node in the compgraph
+    """
+    register = False
+    blackbox = False
 
     def __new__(cls, *args, **kwds):
         fn = object.__new__(cls)
@@ -230,10 +239,10 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
         
     def __repr__(self):
         return self.__name__
-    
+
 def registermethod(fn):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
-    if not isinstance(fn, type): fn = Function(fn)
+    if not isinstance(fn, type): fn = Function(fn)  # not a class
     def f(*args, **kwds): return fn(*args, **kwds)  # a method needs to be a function
     setattr(Param, name := fn.__name__.lower(), f)
     if name in {'add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem'}:
@@ -252,17 +261,12 @@ def wrap_call(call):
     return wrapper
 
 class Function(AbstractFunction):
-    """ Baseclass of functions applied to Params.
-    The class is directly callable like functions.
-    An instance of it acts as a node in the computation graph. 
-    
+    """ Baseclass of functions applied to Params. 
+
     Attributes:
-        blackbox: whether this appears as a single node in the compgraph
-        partial: whether this function contains params to be initialized
-        register: whether to register this function as a method of the Param class
+        partial: whether this function can be partially applied (cf. functools.partial)
     """
     blackbox = logLevel != DEBUG  # as a blackbox when not debugging
-    register = False
     partial = False
 
     def __new__(cls, *args, **kwds):
@@ -307,6 +311,7 @@ class Operation(Function):
     then `self.deriv.shape` should be (2,3,4) with `self.deriv[i,j,k] = dy[k] / dx[i,j]`.
     
     Attributes:
+        cache: whether to cache the computation results of the operation
         ndim_in, ndim_out: least num of dims of input(s) and output
     """
     register = True
@@ -379,15 +384,15 @@ class Operation(Function):
         for name, val in bind_pars(self.apply, *args, **kwds).items():
             setattr(self, '_'+name, val)  # store inputs for backward
 
-        key = tuple((k, id(v)) for k, v in binds.items())
-        ret = self.handle_cache(key, super(Function, self).__call__, args, kwds)
+        cache_key = tuple((k, id(v)) for k, v in binds.items())
+        ret = self.handle_cache(cache_key, super(Function, self).__call__, args, kwds)
         if ret[0] == 0:  # inputs in cache
             output, other = ret[1]
             output = output.view()
             self.__dict__.update(other.__dict__)
         else:
             output = Param(ret[1], dtype=dtype, kind=kind)
-            if ret[0] == 1: ret[2][key] = output, self  # save to cache
+            if ret[0] == 1: ret[2][cache_key] = output, self  # save to cache
             
         output._ctx = self  # set the output as the child of the context in the computation graph
         return output

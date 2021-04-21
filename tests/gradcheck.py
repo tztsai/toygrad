@@ -39,8 +39,8 @@ if __name__ == '__main__':
     y2 = Param(size=[2, 10], kind=0).softmax()
     k = Param(size=[4, 3, 3, 3])
     fc = Param(size=[2304, 10])
-    L = Affine(5); L(x)
-    C = Conv2D(4, 3, stride=2); C(im)
+    L = affine(5); L(x)
+    C = conv2D(4, 3, stride=2); C(im)
     w4 = Param(size=[3, 24])
     x2 = Param(size=[256, 16])
     w5 = Param(size=[16, 8])
@@ -67,17 +67,17 @@ if __name__ == '__main__':
         return apply
     
     model = Compose(
-        Affine(24), normalize(),
+        affine(24), normalize(),
         tanh, fixed_dropout(0.4),
-        Affine(5), softmax
+        affine(5), softmax
     ); model(x)
 
     model2 = Compose(
-        Affine(8), normalize(),
+        affine(8), normalize(),
         leakyReLU, fixed_dropout(),
-        Affine(64), normalize(),
+        affine(64), normalize(),
         leakyReLU, fixed_dropout(),
-        Affine(5)
+        affine(5)
     ); model2(x2)
     
     dp = fixed_dropout()
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     w2: w2.concat(w3).tanh().sum()
     w3: w2.concat(w3).tanh().sum()
     w: ((x @ w + b) @ w2 + b).mse(y)
-    w: Affine(x, w, b).tanh().mean()
+    w: affine(x, w, b).tanh().mean()
     w: v.exp().log().sum()
     w: v.softmax().crossentropy(y)
     w: v.smce(t)

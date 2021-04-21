@@ -35,11 +35,11 @@ class F2(Function):
 f2 = F2(10)
 print(f2(111))
 
-print(Affine(np.zeros([5, 3]), Param(size=[3, 4]), Param(size=4)).shape)
-aff = Affine(10)
+print(affine(np.zeros([5, 3]), Param(size=[3, 4]), Param(size=4)).shape)
+aff = affine(10)
 print(aff(np.zeros([5, 3])).shape)
 
-a = MeanPool2D((3, 3))
+a = meanPool2D((3, 3))
 b = a(stride=2)
 c = b(Param(size=[1,3,10,10]))
 print(c.shape)

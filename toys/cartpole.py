@@ -10,9 +10,9 @@ env = gym.make('CartPole-v1')
 class Agent(Compose):
     def __init__(self, dim_out):
         super().__init__(
-            Affine(32), dropout(), leakyReLU,
-            Affine(4), leakyReLU,
-            Affine(dim_out), softmax
+            affine(32), dropout(), leakyReLU,
+            affine(4), leakyReLU,
+            affine(dim_out), softmax
         )
         
     def replay(self, buffer):

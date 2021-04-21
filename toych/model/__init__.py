@@ -104,9 +104,8 @@ class Model(AbstractFunction):
                 return mse
             elif name in ['crossentropy', 'cross_entropy', 'ce']:
                 return crossentropy
-            elif name in ['softmax_crossentropy', 'softmax_ce',
-                        'softmax_cross_entropy', 'smce']:
-                return smce
+            elif name in ['softmax_crossentropy', 'softmax_cross_entropy', 'smce']:
+                return softmaxCrossentropy
             else:
                 raise ValueError(f"unknown loss function: {name}")
         raise TypeError
@@ -147,38 +146,35 @@ class ResNet(Compose):
         34: ((64, 3), (128, 4), (256, 6), (512, 3))
     }
     
-    class Block(Model):
+    class Block(Compose):
         def __init__(self, c_in, c_out, size):
-            self.f = Compose(
-                Conv2D(c_out, size),
-                ReLU,
-                Conv2D(c_out, size),
+            super().__init__(
+                conv2D(c_out, size, normalize=True),
+                reLU,
+                conv2D(c_out, size, normalize=True),
             )
             if c_in == c_out:
                 self.res = lambda x: x
             else:
-                self.res = Conv2D(c_out, 1)
+                self.res = conv2D(c_out, 1, normalize=True)
             
         def apply(self, input):
-            return (self.f(input) + self.res(input)).relu()
+            return (self(input) + self.res(input)).relu()
             
     def __init__(self, layers):
         if layers in self.config:
-            structure = self.config[layers]
+            config = self.config[layers]
         else:
             raise ValueError('ResNet of %d layers is not available' % layers)
         
-        c_outs = [c_out for c_out, n_blocks in structure for _ in range(n_blocks)]
+        c_outs = [c_out for c_out, n_blocks in config for _ in range(n_blocks)]
         c_in_c_outs = zip([None] + c_outs, c_outs)
         
-        head = Compose(
-            Conv2D(64, 7, stride=2), ReLU, MaxPool2D(size=(3, 3))
-        )
-        body = Compose(*[
-            ResNet.Block(c_in, c_out, 3)
-            for c_in, c_out in c_in_c_outs
-        ])
-        tail = Compose(MeanPool2D(size=(2, 2)), Affine(10))
+        head = Compose(conv2D(64, 7, stride=2, normalize=True),
+                       reLU, maxPool2D(size=(3, 3)))
+        body = Compose(*[ResNet.Block(c_in, c_out, 3)
+                         for c_in, c_out in c_in_c_outs])
+        tail = Compose(meanPool2D(size=(2, 2)), affine(10))
         
         super().__init__(head, body, tail)
 
@@ -187,8 +183,8 @@ class LSTM(Model):
     """Long-short term memory."""
 
     def __init__(self, h, d):
-        self.w = [Affine(h) for i in range(4)]
-        self.u = [Affine(h) for i in range(4)]
+        self.w = [affine(h) for i in range(4)]
+        self.u = [affine(h) for i in range(4)]
         self.h, self.c = Param(0, size=[1, h]), Param(0, size=[1, h])
         
     def apply(self, x):
@@ -201,4 +197,5 @@ class LSTM(Model):
         c = tanh(wc(x) + uc(h))     # candidate
         self.c = self.c*f + i*c     # update
         self.h = o * tanh(self.c)
+        setparnames()
         return o

@@ -4,17 +4,17 @@ from data.mnist import *
 
 def classifier(classes):
     return Compose(
-        Affine(32), dropout(0.2), ReLU,
-        # Affine(16), dropout(0.2), ReLU,
-        Affine(classes)
+        affine(32), dropout(0.2), reLU,
+        # affine(16), dropout(0.2), reLU,
+        affine(classes)
     )
     
 def classifier2(classes):
     return Compose(
-        Conv2D(32, 5, stride=2), ReLU,
-        Conv2D(64, 5, stride=2), ReLU,
-        Conv2D(128, 3, stride=2), ReLU,
-        flatten, Affine(classes)
+        conv2D(32, 5, stride=2), reLU,
+        conv2D(64, 5, stride=2), reLU,
+        conv2D(128, 3, stride=2), reLU,
+        flatten, affine(classes)
     )
 
 clf = classifier2(10)

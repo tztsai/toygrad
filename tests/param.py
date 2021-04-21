@@ -10,7 +10,7 @@ print(a.training)
 b = np.sign(a)
 c = np.ones([3, 4]).view(Param)
 
-model = Model(Affine(4))
+model = Model(affine(4))
 model(Param(size=[10, 3]))
 model.save('tmp')
 model_ = Model.load('tmp')

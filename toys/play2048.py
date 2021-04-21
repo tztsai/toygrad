@@ -47,11 +47,11 @@ class DQNAgent(Model):
     def __init__(self):
         self.apply = Compose(
             self.preprocess,
-            Affine(128), normalize(),
+            affine(128), normalize(),
             leakyReLU, #dropout,
-            Affine(64), normalize(),
+            affine(64), normalize(),
             leakyReLU,
-            Affine(self.dim_out)
+            affine(self.dim_out)
         )
         
         self.eps = self.eps_start
