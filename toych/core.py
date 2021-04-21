@@ -240,11 +240,12 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
     def __repr__(self):
         return self.__name__
 
-def registermethod(fn):
+def registermethod(fn, name=None):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
     if not isinstance(fn, type): fn = Function(fn)  # not a class
     def f(*args, **kwds): return fn(*args, **kwds)  # a method needs to be a function
-    setattr(Param, name := fn.__name__.lower(), f)
+    if name is None: name = fn.__name__.lower()
+    setattr(Param, name, f)
     if name in {'add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem'}:
         setattr(Param, f"__{name}__", f)
         setattr(Param, f"__r{name}__", lambda self, x: f(x, self))

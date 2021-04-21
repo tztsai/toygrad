@@ -171,10 +171,10 @@ class ResNet(Compose):
         c_in_c_outs = zip([None] + c_outs, c_outs)
         
         head = Compose(conv2D(64, 7, stride=2, normalize=True),
-                       reLU, maxPool2D(size=(3, 3)))
+                       reLU, maxPool(size=(3, 3)))
         body = Compose(*[ResNet.Block(c_in, c_out, 3)
                          for c_in, c_out in c_in_c_outs])
-        tail = Compose(meanPool2D(size=(2, 2)), affine(10))
+        tail = Compose(meanPool(size=(2, 2)), affine(10))
         
         super().__init__(head, body, tail)
 

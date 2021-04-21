@@ -132,7 +132,7 @@ class softmaxCrossentropy(Operation):
         self.deriv = (probabs - labels) / e.size, None
         return e.mean()
 
-setattr(Param, 'smce', softmaxCrossentropy)  # set a shorter alias
+registermethod(softmaxCrossentropy, 'smce')  # register a shorter alias
 
 
 ### operations that overrides the `backward` method ###
@@ -276,8 +276,10 @@ def ones(*shape, kind='variable', dtype=float):
 class pool2D(Function):
     register = True
     partial = True
+    reduce = NotImplemented
     
-    def apply(self, im, size=(2,2), stride=1):
+    def apply(self, im, size=(2, 2), stride=1):
+        if type(size) is int: size = (size, size)
         return self.reduce(self.pool2d(im, *size, stride), axis=(-3, -1))
     
     @staticmethod
@@ -285,21 +287,18 @@ class pool2D(Function):
         (dy, ry), (dx, rx) = divmod(im.shape[-2], py*st), divmod(im.shape[-1], px*st)
         pools = im[:, :, :im.shape[-2]-ry:st, :im.shape[-1]-rx:st]
         return pools.reshape(*im.shape[:-2], dy, py, dx, px)
-    
-    @staticmethod
-    def reduce(pools, axis):
-        raise NotImplementedError
 
-class meanPool2D(pool2D):
+class meanPool(pool2D):
     reduce = mean
     
-class maxPool2D(pool2D):
+class maxPool(pool2D):
     reduce = max
     
 
 ### operations or methods containing parameters to be initialized ###
 
 class conv2D(Operation):
+    """Convolve 2D images with filters."""
     cache = False
     
     def __init__(self, c_out, size, stride=1, groups=1, normalize=False):

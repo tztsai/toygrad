@@ -146,14 +146,16 @@ normalize()  # now it is a function containing trainable weight and bias
 >>> from toych.optim import Adam
 >>> nn = tc.model.Compose(
         conv2D(32, size=(5, 5), stride=2),
+        normalize2D(), maxPool(),
         conv2D(64, size=(5, 5), stride=2),
+        normalize2D(), maxPool(),
         conv2D(128, size=(3, 3), stride=2),
-        maxPool2D((4, 4)),
+        normalize2D(), maxPool((4, 4)),
         flatten,
         affine(64), normalize(),
         dropout, reLU,
         affine(32), normalize(),
-        dropout(0.2), reLU,
+        dropout(p=0.2), reLU,
         affine(10), softmax
     )
 >>> labels = tc.utils.onehot(np.random.randint(10, size=100), 10)
