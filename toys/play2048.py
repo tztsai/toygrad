@@ -26,7 +26,7 @@ class DQNAgent(Model):
     eps_decay = 30000
     replay_batch_size = 256
 
-    optim = Adam(decay='l2')
+    optim = Adam(reg='l2')
     
     class Memory(list):
         capacity = 50000

@@ -14,7 +14,7 @@ There can be 3 ways to apply a function or operation:
 """
 import numpy as np
 from .core import Param, Function, Operation, registermethod
-from .utils.dev import ensure_list, abstractmethod, ABC, random
+from .utils.dev import ensure_list, abstractmethod, ABC, random, dbg, info
 
 
 class UnaryOp(Operation):
@@ -189,7 +189,8 @@ class concat(Operation):
     
     def backward(self, grad_out):
         return np.split(grad_out, [self._i], axis=self._ax)
-        
+
+
 def apply_to_axes(f):
     def wrapper(self, x, axis=None, keepdims=False, out=None):
         axes = range(np.ndim(x)) if axis is None else ensure_list(axis)
@@ -224,10 +225,10 @@ class max(Operation):
 ### functions that are registered as Param methods ###
 
 @registermethod
-def sub(x, y): return x + (-1. * y)
+def sub(x, y): return x + (-1 * y)
 
 @registermethod
-def neg(x): return 0. - x
+def neg(x): return 0 - x
 
 @registermethod
 def sqrt(x): return x ** 0.5
@@ -312,6 +313,8 @@ class conv2D(Operation):
         self.filters = Param(size=[self.c_out, self.c_in, *self.size])
         self.bn = normalize2D() if self.bn else None
         self.built = True
+        info('conv2D: im_size=%s, in_channels=%d, out_channels=%d',
+             input.shape[-2:], self.c_in, self.c_out)
         
     def update_args(self, input):  # returns the args passed to "self.apply"
         if not self.built: self.build(input)
@@ -393,6 +396,7 @@ class affine(Function):
         self.w = Param(size=[self.d_in, self.d_out])
         self.b = Param(size=self.d_out) if self.with_bias else 0
         self.built = True
+        info(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')
 
     def update_args(self, input):
         if not self.built: self.build(input)
@@ -403,6 +407,7 @@ class affine(Function):
 
 class normalize(Function):
     register = True
+    partial = True
     eps = 1e-5
     mom = 0.9
     axis = 0  # the axis along which to apply normalization

@@ -1,6 +1,9 @@
-from toych import *
+from importer import *
 
 a = Param(size=[5, 5])
+b = Param((5, 3))
+c = (a @ b).sum()
+list(c.backward())
 
 print(a.training)
 with Param.not_training():

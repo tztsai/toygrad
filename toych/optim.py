@@ -6,37 +6,36 @@ class Optimizer(AbstractFunction):
     """Base class of an optimizer."""
 
     lr = 1e-3    # learning rate
-    decay = None # weight decay
-    lamb = 2e-3  # coefficient of weight decay (lambda)
+    reg = None   # regularization
+    lamb = 2e-3  # coefficient of regularization (lambda)
 
-    def __init__(self, lr=lr, decay=decay, lamb=lamb):
+    def __init__(self, lr=lr, reg=reg, lamb=lamb):
         self.lr = lr
-        self.decay = decay
+        self.reg = reg
         self.lamb = lamb
 
     def apply(self, parameters):
-        for param in parameters:
-            assert isinstance(param, Param) and not param.constant
-            if not param.grad_clean:
-                param += self.delta(param)
-                if self.decay:
-                    param -= self.lr * self.lamb * self.decay_term(param)
-                param.zero_grad()
+        for par in parameters:
+            assert isinstance(par, Param) and not par.constant
+            par += self.delta(par)
+            if self.reg:
+                par += self.lr * self.lamb * self.reg_term(par)
+            par.zero_grad()
 
     @abstractmethod
     def delta(self, parameter):
         """The amount of change of a parameter given by the optimizer."""
         
-    def decay_term(self, param):
-        if self.decay is None:
+    def reg_term(self, param):
+        if self.reg is None:
             return 0
-        elif callable(self.decay):
-            return self.decay(param)
-        elif type(self.decay) is str:
-            if self.decay.lower() in ['l1', 'lasso']:
-                return np.sign(param)
-            elif self.decay.lower() in ['l2', 'ridge']:
-                return param
+        elif callable(self.reg):
+            return self.reg(param)
+        elif type(self.reg) is str:
+            if self.reg.lower() in ['l1', 'lasso']:
+                return -np.sign(param)
+            elif self.reg.lower() in ['l2', 'ridge']:
+                return -param
             else:
                 raise ValueError('unknown regularization')
         else:

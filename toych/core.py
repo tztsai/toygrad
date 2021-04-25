@@ -69,7 +69,8 @@ class Param(np.ndarray):
             self.__init__(kind='constant')
         
     def __init__(self, value=None, *, kind=None, name=None, **kwds):
-        if kind is None: kind = 'trainable' if value is None else 'variable'
+        if kind is None:
+            kind = 'trainable' if isinstance(value, (type(None), tuple)) else 'variable'
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
         self.name = name
@@ -135,7 +136,9 @@ class Param(np.ndarray):
                 x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
                 if isinstance(x, Param) and not x.constant: x.grad += g
-        return (p for p in params if p.trainable)  # generate trainable parameters for optimization
+
+        for p in params:
+            if p.trainable: yield p
     
     def copy(self):
         cp = Param(super().copy(), dtype=self.dtype)

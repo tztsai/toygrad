@@ -129,7 +129,7 @@ def DefaultNone(cls):
     return cls
 
 class Cache(dict):
-    def __init__(self, size=128):
+    def __init__(self, size=32):
         self.size = size
         self.queue = []
         self._cnt = 0
@@ -144,7 +144,7 @@ class Cache(dict):
             self.queue.append(key)
         if len(self.queue) > self.size:
             for _ in range(5):
-                self.pop(self.queue.pop(0))
+                del self[self.queue.pop(0)]
         super().__setitem__(key, value)
 
 

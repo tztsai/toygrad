@@ -60,7 +60,7 @@ class Model(AbstractFunction):
                 e = loss_func(y, t)     # compute the loss
                 params = e.backward()   # pass backward the loss
                 optimizer(params)
-                loss += e
+                loss += e.item()
 
             history['loss'].append(loss / batches.size)
 
@@ -153,13 +153,14 @@ class ResNet(Compose):
                 reLU,
                 conv2D(c_out, size, normalize=True),
             )
-            if c_in == c_out:
-                self.res = lambda x: x
-            else:
-                self.res = conv2D(c_out, 1, normalize=True)
+            if c_in != c_out:  # convolve with filters of size 1 to change number of channels
+                self.identity = conv2D(c_out, 1, normalize=True)
+                
+        @staticmethod
+        def identity(x): return x
             
         def apply(self, input):
-            return (self(input) + self.res(input)).relu()
+            return (self(input) + self.identity(input)).relu()
             
     def __init__(self, layers):
         if layers in self.config:
