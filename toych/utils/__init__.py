@@ -3,12 +3,11 @@ import inspect
 import pickle
 import random
 import itertools
-import cv2
+import moviepy
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import ArtistAnimation
 from collections import defaultdict
-from .dev import DefaultNone, pbar, setloglevel
+from .dev import pbar, setloglevel, Profile
 
 
 def onehot(x, k, *, cold=0, hot=1):
@@ -38,7 +37,6 @@ def accuracy(probabs, labels):
     return (preds == labels).mean() * 100
 
 
-@DefaultNone
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
     batch_size = 16
@@ -49,7 +47,7 @@ class BatchLoader:
         assert all(len(x) == self.size for x in data), \
             'different sizes of data'
 
-        self.batch_size = batch_size
+        if batch_size: self.batch_size = batch_size
         self.steps = range(0, self.size, self.batch_size)
 
     def __len__(self):
@@ -78,17 +76,9 @@ def setparnames(**bindings):
         if type(par).__name__ == 'Param':
             par.name = name
 
-def makegif(frames, filename='__tmp__.gif', blit=True, fps=60, **kwds):
-    fig, ax = plt.subplots()
-    ax.axis('off')
-    gif = ArtistAnimation(fig, [[ax.imshow(f)] for f in frames], blit=blit, **kwds)
-    gif.save(filename=filename, fps=fps)
-
-def makevideo(frames, filename='__tmp__.avi', fps=50, frameSize=(500, 500)):
-    print(frameSize)
-    out = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'MJPG'), fps, frameSize)
-    for frame in frames: out.write(frame)
-    out.release()
+def makegif(frames, filename='_tmp_.gif', fps=60, **kwds):
+    clip = moviepy.editor.VideoClip(frames.__getitem__)
+    clip.write_gif(filename, fps=fps)
     
 # def discretize(x, splits):
 #     """Discretize the data with the splitting points."""

@@ -49,8 +49,8 @@ class abs(UnaryOp):
     
 class reLU(UnaryOp):
     def apply(self, x):
-        self.deriv = (x >= 0.)
-        return np.maximum(x, 0.)
+        self.deriv = (x >= 0.).astype(np.float)
+        return self.deriv * x
 
 class leakyReLU(UnaryOp):
     partial = True
@@ -76,23 +76,44 @@ class BinaryOp(Operation):
     ndim_in, ndim_out = (0, 0), 0
 
 class Add(BinaryOp):
-    def apply(self, x, y):
-        self.deriv = np.ones_like(x), np.ones_like(y)
-        return x + y
+    def apply(self, x, y, inplace=False):
+        if inplace:
+            assert not Param.training
+            x += y
+        else:
+            self.deriv = np.ones_like(x), np.ones_like(y)
+            return x + y
+        
+class Sub(BinaryOp):
+    def apply(self, x, y, inplace=False):
+        if inplace:
+            assert not Param.training
+            x -= y
+        else:
+            self.deriv = np.ones_like(x), np.full_like(y, -1)
+            return x - y
 
 class Mul(BinaryOp):
-    def apply(self, x, y):
-        self.deriv = y, x
-        return x * y
+    def apply(self, x, y, inplace=False):
+        if inplace:
+            assert not Param.training
+            x *= y
+        else:
+            self.deriv = y, x
+            return x * y
     
 class TrueDiv(BinaryOp):
-    def apply(self, x, y):
-        py = self.inputs[1]
-        if isinstance(py, Param) and not py.constant:
-            self.deriv = 1/y, -x/y**2
+    def apply(self, x, y, inplace=False):
+        if inplace:
+            assert not Param.training
+            x /= y
         else:
-            self.deriv = 1/y, None
-        return x / y
+            py = self.inputs[1]
+            if isinstance(py, Param) and not py.constant:
+                self.deriv = 1/y, -x/y**2
+            else:
+                self.deriv = 1/y, None
+            return x / y
 
 class Pow(BinaryOp):
     def apply(self, x, y):
@@ -220,12 +241,9 @@ class max(Operation):
     
     def backward(self, grad_y):
         yield self._d * grad_y.reshape(self._sh)
-        
+
 
 ### functions that are registered as Param methods ###
-
-@registermethod
-def sub(x, y): return x + (-1 * y)
 
 @registermethod
 def neg(x): return 0 - x
@@ -247,7 +265,7 @@ def crossentropy(x, y, axis=-1, avg=True):
 @registermethod
 def mean(x, axis=None, keepdims=False):
     s = sum(x, axis=axis, keepdims=keepdims)
-    return s * np.prod(np.shape(s)) / np.prod(np.shape(x))
+    return s * (np.prod(np.shape(s)) / np.prod(np.shape(x)))
 
 @registermethod
 def mse(x, y, axis=None, keepdims=False):

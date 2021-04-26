@@ -104,14 +104,6 @@ class Param(np.ndarray):
 
     @property
     def data(self): return np.asarray(self)
-
-    def view(self, *args):
-        if not args: return Param(self, dtype=self.dtype, kind=self.kind)
-        else: return super().view(*args)
-        
-    def assign(self, par):
-        if self.shape: self[:] = par; return self
-        else: return par
         
     def backward(self, debugfile=None):
         if not Param.training: return
@@ -132,13 +124,15 @@ class Param(np.ndarray):
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
             assert not y.grad_clean
-            with Profile(ctx, backward=True):
-                x_grads = ctx.backward(y.grad)
+            x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
                 if isinstance(x, Param) and not x.constant: x.grad += g
+                
+        return (p for p in params if p.trainable)
 
-        for p in params:
-            if p.trainable: yield p
+    def view(self, *args):
+        if not args: return Param(self, dtype=self.dtype, kind=self.kind)
+        else: return super().view(*args)
     
     def copy(self):
         cp = Param(super().copy(), dtype=self.dtype)
@@ -190,7 +184,6 @@ class FunctionMeta(ABCMeta):
                 registermethod(cls)
             if hasattr(cls, 'cache') and cls.cache:
                 cls._cache = Cache()
-                atexit.register(cls.log_cache_hits)
 
     def __call__(cls, *args, **kwds):
         if inspect.isabstract(cls):
@@ -234,8 +227,7 @@ class AbstractFunction(ABC, metaclass=FunctionMeta):
         return args, kwds
         
     def __call__(self, *args, **kwds):
-        with Profile(self):
-            output = self.apply(*args, **kwds)
+        output = self.apply(*args, **kwds)
         if isinstance(output, Param) and self.blackbox:
             output._outer_ctx = self
         return output
@@ -249,10 +241,12 @@ def registermethod(fn, name=None):
     def f(*args, **kwds): return fn(*args, **kwds)  # a method needs to be a function
     if name is None: name = fn.__name__.lower()
     setattr(Param, name, f)
-    if name in {'add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem'}:
+    if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
         setattr(Param, f"__{name}__", f)
-        setattr(Param, f"__r{name}__", lambda self, x: f(x, self))
-        setattr(Param, f"__i{name}__", lambda self, x: self.assign(f(self, x)))
+        if name not in ['neg', 'getitem']:
+            setattr(Param, f"__r{name}__", lambda self, x: f(x, self))
+        if name in ['add', 'sub', 'mul', 'truediv']:
+            setattr(Param, f"__i{name}__", lambda self, x: f(self, x, inplace=True))
     return fn
 
 def wrap_call(call):
@@ -360,10 +354,6 @@ class Operation(Function):
             if key in (cache := cls._cache): return 0, cache[key]
             else: return 1, func(*args, **kwds), cache
         else: return 2, func(*args, **kwds)
-        
-    @classmethod
-    def log_cache_hits(cls):
-        if cls._cache._cnt: dbg('%d cache hits of %s', cls._cache._cnt, cls)
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""

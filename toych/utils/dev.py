@@ -12,7 +12,7 @@ from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
 from functools import wraps, partial
 from contextlib import contextmanager
-from collections import defaultdict, namedtuple, OrderedDict
+from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
 from abc import ABC, ABCMeta, abstractmethod
 
@@ -26,13 +26,13 @@ class Profile:
             dbg(f"{name:>20} : {cls.debug_counts[name]:>6} "
                 f"{cls.debug_times[name]:>10.2f} ms")
     
-    def __init__(self, ctx, backward=False):
-        self.name = f"back_{ctx}" if backward else str(ctx)
+    def __init__(self, name=''):
+        self.name = name
 
     def __enter__(self):
         self.st = time.time()
 
-    def __exit__(self, *junk):
+    def __exit__(self, *_):
         et = (time.time()-self.st)*1000.
         self.debug_counts[self.name] += 1
         self.debug_times[self.name] += et
@@ -73,12 +73,13 @@ warn = logger.warning
 
     
 def setloglevel(level):
+    if type(level) is str: level = level.upper()
     logger.setLevel(level)
 
 def ensure_list(a):
     return [a] if type(a) not in [list, tuple] else list(a)
 
-def pbar(iterable, unit=' batches', **kwds):
+def pbar(iterable, unit='batch', **kwds):
     """A process bar."""
     if logger.level > logging.INFO: return iterable
     return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)

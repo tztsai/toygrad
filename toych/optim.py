@@ -15,12 +15,13 @@ class Optimizer(AbstractFunction):
         self.lamb = lamb
 
     def apply(self, parameters):
-        for par in parameters:
-            assert isinstance(par, Param) and not par.constant
-            par += self.delta(par)
-            if self.reg:
-                par += self.lr * self.lamb * self.reg_term(par)
-            par.zero_grad()
+        with Param.not_training():
+            for par in parameters:
+                assert isinstance(par, Param) and not par.constant
+                par += self.delta(par)
+                if self.reg:
+                    par += self.lr * self.lamb * self.reg_term(par)
+                par.zero_grad()
 
     @abstractmethod
     def delta(self, parameter):

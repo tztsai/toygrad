@@ -1,7 +1,7 @@
 from ..core import AbstractFunction
 from ..func import *
 from ..optim import *
-from ..utils.dev import defaultdict, info, dbg, warn, pbar
+from ..utils.dev import defaultdict, info, dbg, warn, pbar, Profile
 from ..utils import BatchLoader, setparnames, graph, pickle
 
 
@@ -56,7 +56,8 @@ class Model(AbstractFunction):
             
             loss = 0
             for x, t in pbar(batches):
-                y = self(x)             # pass forward the input
+                with Profile('test'):
+                    y = self(x)             # pass forward the input
                 e = loss_func(y, t)     # compute the loss
                 params = e.backward()   # pass backward the loss
                 optimizer(params)
@@ -67,8 +68,7 @@ class Model(AbstractFunction):
             with Param.not_training():
                 if val_data:
                     x_val, t_val = val_data
-                    with Param.not_training():
-                        y_val = self(x_val)
+                    y_val = self(x_val)
                     metrics['val_loss'] = loss_func
                     for name, metric in metrics.items():
                         history[name].append(metric(y_val, t_val))
