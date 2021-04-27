@@ -12,7 +12,7 @@ from .dev import pbar, setloglevel, Profile
 
 def onehot(x, k, *, cold=0, hot=1):
     x = np.asarray(x)
-    m = np.full((*x.shape, k), cold, dtype=np.int)
+    m = np.full((*x.shape, k), cold, dtype=np.float)
     for idx in itertools.product(*map(range, x.shape)):
         m[idx][x[idx]] = hot
     return m

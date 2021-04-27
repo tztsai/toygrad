@@ -28,7 +28,7 @@ class exp(UnaryOp):
 
 class log(UnaryOp):
     def apply(self, x):
-        self.deriv = 1 / x
+        self.deriv = 1. / x
         return np.log(x)
     
 class tanh(UnaryOp):
@@ -60,7 +60,6 @@ class leakyReLU(UnaryOp):
 
 class dropout(UnaryOp):
     partial = True
-    cache = False
     def apply(self, x, p=0.5, mask=None):
         if not Param.training:
             self.deriv = 1.
@@ -76,44 +75,28 @@ class BinaryOp(Operation):
     ndim_in, ndim_out = (0, 0), 0
 
 class Add(BinaryOp):
-    def apply(self, x, y, inplace=False):
-        if inplace:
-            assert not Param.training
-            x += y
-        else:
-            self.deriv = np.ones_like(x), np.ones_like(y)
-            return x + y
+    def apply(self, x, y):
+        self.deriv = np.ones_like(x), np.ones_like(y)
+        return x + y
         
 class Sub(BinaryOp):
-    def apply(self, x, y, inplace=False):
-        if inplace:
-            assert not Param.training
-            x -= y
-        else:
-            self.deriv = np.ones_like(x), np.full_like(y, -1)
-            return x - y
+    def apply(self, x, y):
+        self.deriv = np.ones_like(x), np.full_like(y, -1)
+        return x - y
 
 class Mul(BinaryOp):
-    def apply(self, x, y, inplace=False):
-        if inplace:
-            assert not Param.training
-            x *= y
-        else:
-            self.deriv = y, x
-            return x * y
+    def apply(self, x, y):
+        self.deriv = y, x
+        return x * y
     
 class TrueDiv(BinaryOp):
-    def apply(self, x, y, inplace=False):
-        if inplace:
-            assert not Param.training
-            x /= y
+    def apply(self, x, y):
+        py = self.inputs[1]
+        if isinstance(py, Param) and not py.constant:
+            self.deriv = 1/y, -x/y**2
         else:
-            py = self.inputs[1]
-            if isinstance(py, Param) and not py.constant:
-                self.deriv = 1/y, -x/y**2
-            else:
-                self.deriv = 1/y, None
-            return x / y
+            self.deriv = 1/y, None
+        return x / y
 
 class Pow(BinaryOp):
     def apply(self, x, y):
@@ -130,7 +113,7 @@ class maximum(BinaryOp):
         tx = (x == out).astype(float)
         self.deriv = tx, 1. - tx
         return out
-        
+
 
 class softmax(Operation):
     ndim_in, ndim_out = 1, 1
@@ -252,15 +235,15 @@ def neg(x): return 0 - x
 def sqrt(x): return x ** 0.5
 
 @registermethod
-def sigmoid(x): return exp(x) / (1 + exp(x))
+def sigmoid(x): return (ex := exp(x)) / (1 + ex)
 
 @registermethod
 def swish(x): return x * sigmoid(x)
 
 @registermethod
 def crossentropy(x, y, axis=-1, avg=True):
-    e = (y * -log(x)).sum(axis=axis)
-    return e.mean() if avg else e
+    e = sum(y * -log(x), axis=axis)
+    return mean(e) if avg else e
 
 @registermethod
 def mean(x, axis=None, keepdims=False):
@@ -292,6 +275,7 @@ def zeros(*shape, kind='variable', dtype=float):
 def ones(*shape, kind='variable', dtype=float):
     return Param(np.ones(shape, dtype=dtype), kind=kind)
 
+
 class pool2D(Function):
     register = True
     partial = True
@@ -318,7 +302,6 @@ class maxPool(pool2D):
 
 class conv2D(Operation):
     """Convolve 2D images with filters."""
-    cache = False
     
     def __init__(self, c_out, size, stride=1, groups=1, normalize=False):
         if type(size) is int: size = (size, size)
@@ -331,8 +314,8 @@ class conv2D(Operation):
         self.filters = Param(size=[self.c_out, self.c_in, *self.size])
         self.bn = normalize2D() if self.bn else None
         self.built = True
-        info('conv2D: im_size=%s, in_channels=%d, out_channels=%d',
-             input.shape[-2:], self.c_in, self.c_out)
+        dbg('init conv2D: im_size=%s, in_channels=%d, out_channels=%d',
+            input.shape[-2:], self.c_in, self.c_out)
         
     def update_args(self, input):  # returns the args passed to "self.apply"
         if not self.built: self.build(input)
@@ -398,8 +381,7 @@ class conv2D(Operation):
                     tg = np.dot(gy[:, g, :, i, j].reshape(bs, -1), tf[g].reshape(c_out, -1))
                     gx[:, g, :, si:si+fh, sj:sj+fw] += tg.reshape((bs, c_in, fh, fw))
             gx = gx.reshape(self._xsh)
-        else:
-            gx = None
+        else: gx = None
             
         return gx, gf
 
@@ -414,7 +396,7 @@ class affine(Function):
         self.w = Param(size=[self.d_in, self.d_out])
         self.b = Param(size=self.d_out) if self.with_bias else 0
         self.built = True
-        info(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')
+        dbg(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')
 
     def update_args(self, input):
         if not self.built: self.build(input)
@@ -457,7 +439,7 @@ class normalize(Function):
             assert axis is None
         if axis is None:
             axis = self.axis
-            
+
         batch_mean = mean(input, axis, keepdims=True)
         batch_std = std(input, axis, keepdims=True, eps=self.eps)
 

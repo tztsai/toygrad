@@ -56,8 +56,7 @@ class Model(AbstractFunction):
             
             loss = 0
             for x, t in pbar(batches):
-                with Profile('test'):
-                    y = self(x)             # pass forward the input
+                y = self(x)             # pass forward the input
                 e = loss_func(y, t)     # compute the loss
                 params = e.backward()   # pass backward the loss
                 optimizer(params)

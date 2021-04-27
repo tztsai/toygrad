@@ -117,9 +117,11 @@ class Param(np.ndarray):
                 continue
             stack.append([1, param])
             if param._ctx:
-                [[visited.add(p), stack.append([0, p])] for p in param._ctx.inputs
+                [[visited.add(p), stack.append([0, p])]
+                 for p in reversed(param._ctx.inputs)
                  if isinstance(p, Param) and not p.constant and p not in visited]
 
+        # print('\n'.join(str(n._ctx) for n in params))
         self.grad = np.ones(self.shape)
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
@@ -180,10 +182,7 @@ class FunctionMeta(ABCMeta):
     def __init__(cls, name, bases, ns):
         super().__init__(name, bases, ns)
         if not inspect.isabstract(cls):
-            if cls.register:
-                registermethod(cls)
-            if hasattr(cls, 'cache') and cls.cache:
-                cls._cache = Cache()
+            if cls.register: registermethod(cls)
 
     def __call__(cls, *args, **kwds):
         if inspect.isabstract(cls):
@@ -245,8 +244,6 @@ def registermethod(fn, name=None):
         setattr(Param, f"__{name}__", f)
         if name not in ['neg', 'getitem']:
             setattr(Param, f"__r{name}__", lambda self, x: f(x, self))
-        if name in ['add', 'sub', 'mul', 'truediv']:
-            setattr(Param, f"__i{name}__", lambda self, x: f(self, x, inplace=True))
     return fn
 
 def wrap_call(call):
@@ -264,8 +261,12 @@ class Function(AbstractFunction):
     Attributes:
         partial: whether this function can be partially applied (cf. functools.partial)
     """
-    blackbox = logLevel != DEBUG  # as a blackbox when not debugging
     partial = False
+    
+    @classmethod
+    @property
+    def blackbox(cls):
+        return logger.level != DEBUG
 
     def __new__(cls, *args, **kwds):
         fn = super().__new__(cls, *args, **kwds)
@@ -309,11 +310,9 @@ class Operation(Function):
     then `self.deriv.shape` should be (2,3,4) with `self.deriv[i,j,k] = dy[k] / dx[i,j]`.
     
     Attributes:
-        cache: whether to cache the computation results of the operation
         ndim_in, ndim_out: least num of dims of input(s) and output
     """
     register = True
-    cache = True
     ndim_in, ndim_out = 0, 0
     
     def backward(self, grad_out):
@@ -347,13 +346,6 @@ class Operation(Function):
         # debroadcast - sum over the broadcasted axes
         if bc_axes: grad = np.sum(grad, axis=tuple(bc_axes))
         return grad.reshape(np.shape(input))
-    
-    @classmethod
-    def handle_cache(cls, key, func, args, kwds):
-        if cls.cache:
-            if key in (cache := cls._cache): return 0, cache[key]
-            else: return 1, func(*args, **kwds), cache
-        else: return 2, func(*args, **kwds)
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
@@ -378,16 +370,8 @@ class Operation(Function):
         for name, val in bind_pars(self.apply, *args, **kwds).items():
             setattr(self, '_'+name, val)  # store inputs for backward
 
-        cache_key = tuple((k, id(v)) for k, v in binds.items())
-        ret = self.handle_cache(cache_key, super(Function, self).__call__, args, kwds)
-        if ret[0] == 0:  # inputs in cache
-            output, other = ret[1]
-            output = output.view()
-            self.__dict__.update(other.__dict__)
-        else:
-            output = Param(ret[1], dtype=dtype, kind=kind)
-            if ret[0] == 1: ret[2][cache_key] = output, self  # save to cache
-            
+        output = Param(super(Function, self).__call__(*args, **kwds),
+                       dtype=dtype, kind=kind)
         output._ctx = self  # set the output as the child of the context in the computation graph
         return output
     

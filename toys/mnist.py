@@ -148,7 +148,7 @@ class MLP:
 
 def classifier(classes):
     return Compose(
-        affine(30), tanh,#reLU, dropout, leakyReLU,
+        affine(30), tanh,
         affine(classes), tanh
     )
 
@@ -164,9 +164,11 @@ def accuracy(out, labels):
 
 setloglevel('debug')
 
-# clf = MLP([input_dim, 30, 10])
-# clf.fit(x_train, y_train, epochs=10)
-
 clf = classifier(10)
-history = clf.fit(x_train, y_train, epochs=10, loss='l2', optimizer='sgd',
-                  val_data=(x_val, y_val), metrics={'val_acc': accuracy})
+
+clf2 = MLP([input_dim, 30, 10])
+
+clf2.fit(x_train, y_train, epochs=1)
+
+clf.fit(x_train, y_train, epochs=3, loss='l2', optimizer='sgd',
+        val_data=(x_val, y_val), metrics={'val_acc': accuracy})

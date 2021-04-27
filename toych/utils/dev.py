@@ -57,10 +57,8 @@ class LogFormatter(logging.Formatter):
         record.msg = record.msg % record.args
         return fmt % dct
 
-logLevel = logging.INFO
-
 logger = logging.getLogger(__name__)
-logger.setLevel(logLevel)
+logger.setLevel(logging.INFO)
 logFormat = LogFormatter()
 logHandler = logging.StreamHandler()
 logHandler.setLevel(logging.DEBUG)
