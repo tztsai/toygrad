@@ -1,19 +1,22 @@
-from ..core import AbstractFunction
+from ..core import Function
 from ..func import *
 from ..optim import *
 from ..utils.dev import defaultdict, info, dbg, warn, pbar, Profile
 from ..utils import BatchLoader, setparnames, graph, pickle
 
 
-class Model(AbstractFunction):
+class Model(Function):
     """ Baseclass of learning models.
     Wrap any function `f` by `Model(f)` to convert it to a model.
     """
-    def __init__(self, func):
-        self.apply = func
-        
-    def apply(self, *args, **kwds):
-        raise NotImplementedError
+    need_init = True
+    make_subclass = False
+    
+    def __new__(cls, *args, **kwds):
+        if cls is Model:
+            assert len(args) == 1 and not kwds
+            cls.apply = staticmethod(args[0])
+        return super().__new__(*args, **kwds)
     
     def fit(self, input, target, *, epochs=20, lr=None, bs=None, optimizer='adam',
             loss='l2', val_data=None, metrics={}, callbacks=()) -> dict:
@@ -148,9 +151,9 @@ class ResNet(Compose):
     class Block(Compose):
         def __init__(self, c_in, c_out, size):
             super().__init__(
-                conv2D(c_out, size, normalize=True),
+                conv2D(c_out, size), normalize2D(),
                 reLU,
-                conv2D(c_out, size, normalize=True),
+                conv2D(c_out, size), normalize2D(),
             )
             if c_in != c_out:  # convolve with filters of size 1 to change number of channels
                 self.identity = conv2D(c_out, 1, normalize=True)

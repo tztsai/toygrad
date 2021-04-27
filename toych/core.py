@@ -1,5 +1,4 @@
 import numpy as np
-from abc import ABCMeta, ABC, abstractmethod
 from .utils.dev import *
 
 
@@ -83,9 +82,7 @@ class Param(np.ndarray):
     @grad.setter
     def grad(self, grad):
         if self.constant or not Param.training: return
-        if np.ndim(grad) == 0:  # a scalar
-            grad = np.full(self.shape, grad)
-        elif np.shape(grad) != self.shape:
+        if np.shape(grad) != self.shape:
             raise ValueError('gradient shape mismatch')
         self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
         
@@ -104,8 +101,9 @@ class Param(np.ndarray):
 
     @property
     def data(self): return np.asarray(self)
-        
-    def backward(self, debugfile=None):
+
+    @timeit
+    def backward(self):
         if not Param.training: return
         assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
         
@@ -121,7 +119,6 @@ class Param(np.ndarray):
                  for p in reversed(param._ctx.inputs)
                  if isinstance(p, Param) and not p.constant and p not in visited]
 
-        # print('\n'.join(str(n._ctx) for n in params))
         self.grad = np.ones(self.shape)
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
@@ -159,20 +156,17 @@ class Param(np.ndarray):
         super().__setstate__(state[:-1])
         self.__dict__.update(state[-1])
 
-    def simple_repr(self):
+    def simple_repr(self, auto_name=False):
         name = self.name
-        if self.auto_name and not self.name:
-            call_stack = inspect.stack()
-            if call_stack[1].function == '__repr__':
-                bindings = call_stack[2].frame.f_locals
-                for k, v in bindings.items():
-                    if id(self) == id(v):
-                        name = self.name = k; break
+        if auto_name and not self.name:
+            bindings = inspect.currentframe().f_back.f_back.f_locals
+            for k, v in bindings.items():
+                if id(self) == id(v): name = self.name = k; break
         if not name: name = 'array' if self.constant else 'P' + str(id(self))[-3:]
         return f"{name}{list(self.shape) if self.ndim else '(%s)' % self.item()}"    
     
     def __repr__(self):
-        s = self.simple_repr().replace('[', '(<').replace(']', '>)')
+        s = self.simple_repr(self.auto_name).replace('[', '(<').replace(']', '>)')
         s_kind = next(k for k, v in Param.kinds.items() if v == self.kind)
         s_dtype = '' if self.dtype is np.dtype('float') else ', dtype=' + self.dtype.name
         return f"{s[:-1]}, {s_kind}{s_dtype})"
@@ -182,125 +176,129 @@ class FunctionMeta(ABCMeta):
     def __init__(cls, name, bases, ns):
         super().__init__(name, bases, ns)
         if not inspect.isabstract(cls):
-            if cls.register: registermethod(cls)
+            if cls.register:
+                registermethod(cls)
+            if cls.blackbox:
+                cls.apply = timeit(cls.apply)
+            if '__init__' in ns:
+                cls.need_init = True
 
     def __call__(cls, *args, **kwds):
         if inspect.isabstract(cls):
             assert len(args) == 1 and not kwds
-            # converts a function to a subclass of `cls`
-            bases = (cls, *cls.__bases__)
-            ns = {'apply': staticmethod(f := args[0])}
-            func = FunctionMeta(f.__name__, bases, ns)
-            func.__module__ = f.__module__  # for pickle to lookup attributes?
-            return func
+            return cls.fn2subclass(args[0])
         fn = super().__call__(*args, **kwds)
         return fn
-        
+    
+    def fn2subclass(cls, fn):
+        assert callable(fn)
+        # if inherit: cls = type(fn)
+        bases = (cls, *cls.__bases__)
+        ns = dict(apply=staticmethod(fn))
+        inherit = isinstance(fn, Function)
+        if inherit: ns.update(parent=fn)
+        fc = FunctionMeta(fn.__name__, bases, ns)
+        fc.__module__ = fn.__module__  # for pickle to lookup attributes?
+        return fc
+
     def __repr__(cls):
         return cls.__name__
     
     def __reduce__(self):
         return super().__reduce__()
+    
 
-class AbstractFunction(ABC, metaclass=FunctionMeta):
-    """ Abstract baseclass of callable classes in toych.
-    The class is directly callable like functions.
+def registermethod(fn, name=None):
+    """Registers a class or a function as a method of Param, can be used as a decorator."""
+    if not isinstance(fn, type): fn = Function(fn)
+    if name is None: name = fn.__name__.lower()
+    setattr(Param, name, lambda *args, **kwds: fn(*args, **kwds))
+    if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
+        setattr(Param, f"__{name}__", lambda self, *x: fn(self, *x))
+        if name not in ['neg', 'getitem']:
+            setattr(Param, f"__r{name}__", lambda self, x: fn(x, self))
+    return fn
+
+def wrap_call(call):
+    @timeit
+    @wraps(call)
+    def wrapper(self, *args, **kwds):
+        # ctx = Context(self, args, kwds)
+        # if not isinstance(self, type):
+        self.inputs = args
+        if hasattr(self, 'parent'):
+            args, kwds = self.parent.update_args(*args, **kwds)
+        return call(self, *args, **kwds)
+    return wrapper
+
+# class Context:
+#     def __init__(self, fn, args, kwds):
+#         self.inputs = args
+#         self.__fn = fn
+#         self.__cls = fn if isinstance(fn, type) else type(fn)
+#         self.__name__ = fn.__name__ + signature_str(*args, **kwds)
+#         self.apply = self.convert_method('apply')
+        
+#     def convert_method(self, method_name):
+#         method = getattr(self.__cls, method_name, False)
+#         if method is False: return method
+#         static = next(iter(inspect.signature(method).parameters)) != 'self'
+#         return method if static else partial(method, self)
+        
+#     def __getattr__(self, name):
+#         attr = getattr(self.__fn, name)
+#         return self.convert_method(name) if callable(attr) else attr
+
+#     def __repr__(self):
+#         return self.__name__
+
+class Function(ABC, metaclass=FunctionMeta):
+    """ Baseclass of callable classes in toych.
+    The class can be directly callable like functions (if need_init=False).
     An instance of it acts as a node in the computation graph.
     
     Attributes:
         register: whether to register this function as a method of the Param class
         blackbox: whether this appears as a single node in the compgraph
+        need_init: whether this function needs to be initialized
+        make_subclass: whether to create a new subclass when need_init=True
     """
     register = False
-    blackbox = False
+    blackbox = True
+    need_init = False  # automatically set to True if the class has __init__
+    make_subclass = True
 
     def __new__(cls, *args, **kwds):
         fn = object.__new__(cls)
         fn.__name__ = f"{cls.__name__}{signature_str(*args, **kwds)}"
-        return fn
+        if cls.need_init and not array_at_first(args):
+            fn.__init__(*args, **kwds)
+            return Function(fn) if cls.make_subclass else fn
+        else:
+            return fn(*args, **kwds)
+
+    def __init__(self, *args, **kwds):
+        self.args, self.kwds = args, kwds
 
     @abstractmethod
     def apply(self, *args, **kwds): NotImplemented
 
-    def update_args(self, *args, **kwds):
-        return args, kwds
-        
     def __call__(self, *args, **kwds):
         output = self.apply(*args, **kwds)
         if isinstance(output, Param) and self.blackbox:
             output._outer_ctx = self
         return output
-        
+
+    __call__ = wrap_call(__call__)
+
+    def update_args(self, *args, **kwds):
+        try: args, kwds = args + self.args, {**self.kwds, **kwds}
+        except: pass
+        return args, kwds
+    
     def __repr__(self):
         return self.__name__
 
-def registermethod(fn, name=None):
-    """Registers a class or a function as a method of Param, can be used as a decorator."""
-    if not isinstance(fn, type): fn = Function(fn)  # not a class
-    def f(*args, **kwds): return fn(*args, **kwds)  # a method needs to be a function
-    if name is None: name = fn.__name__.lower()
-    setattr(Param, name, f)
-    if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
-        setattr(Param, f"__{name}__", f)
-        if name not in ['neg', 'getitem']:
-            setattr(Param, f"__r{name}__", lambda self, x: f(x, self))
-    return fn
-
-def wrap_call(call):
-    def wrapper(self, *args, **kwds):
-        if self.wait_inputs:
-            return self.context(*args, **kwds)
-        self.inputs = args
-        output = call(self, *args, **kwds)
-        return output
-    return wrapper
-
-class Function(AbstractFunction):
-    """ Baseclass of functions applied to Params. 
-
-    Attributes:
-        partial: whether this function can be partially applied (cf. functools.partial)
-    """
-    partial = False
-    
-    @classmethod
-    @property
-    def blackbox(cls):
-        return logger.level != DEBUG
-
-    def __new__(cls, *args, **kwds):
-        fn = super().__new__(cls, *args, **kwds)
-        fn.need_init = '__init__' in cls.__dict__
-        fn.parent = None  # a context may have a parent function
-        return fn.decide_call(*args, **kwds)
-
-    def decide_call(self, *args, **kwds):
-        self.wait_inputs = (self.partial or self.need_init) and not array_at_first(args)
-        return self if self.wait_inputs else self(*args, **kwds)
-    
-    def __init__(self, *args, **kwds):
-        self.args, self.kwds = args, kwds
-        self.need_init = False
-    
-    def context(self, *args, **kwds):
-        ctx = object.__new__(type(self))
-        ctx.__name__ = self.__name__ + signature_str(*args, **kwds)
-        ctx.parent = self
-        args, kwds = self.update_args(*args, **kwds)
-        Function.__init__(ctx, *args, **kwds)
-        return ctx.decide_call(*args, **kwds)
-
-    def update_args(self, *args, **kwds):
-        if hasattr(self, 'args'): args += self.args
-        if hasattr(self, 'kwds'): kwds = {**self.kwds, **kwds}
-        return super().update_args(*args, **kwds)
-    
-    def __getattr__(self, name):
-        return getattr(self.parent, name)
-    
-    def __call__(self, *args, **kwds):
-        return super().__call__(*args, **kwds)
-    __call__ = wrap_call(__call__)
 
 class Operation(Function):
     """ Baseclass of Param operations with automatic differentiation.
@@ -370,9 +368,8 @@ class Operation(Function):
         for name, val in bind_pars(self.apply, *args, **kwds).items():
             setattr(self, '_'+name, val)  # store inputs for backward
 
-        output = Param(super(Function, self).__call__(*args, **kwds),
-                       dtype=dtype, kind=kind)
-        output._ctx = self  # set the output as the child of the context in the computation graph
+        output = Param(self.apply(*args, **kwds), dtype=dtype, kind=kind)
+        output._ctx = self
         return output
     
     __call__ = wrap_call(__call__)

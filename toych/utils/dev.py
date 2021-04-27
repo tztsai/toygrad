@@ -14,6 +14,7 @@ from functools import wraps, partial
 from contextlib import contextmanager
 from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
+from types import FunctionType
 from abc import ABC, ABCMeta, abstractmethod
 
 
@@ -22,9 +23,10 @@ class Profile:
 
     @classmethod
     def print_debug_exit(cls):
+        info('\n----------------------  COUNT --- TIME COST ---------------------')
         for name, _ in sorted(cls.debug_times.items(), key=lambda x: -x[1]):
-            dbg(f"{name:>20} : {cls.debug_counts[name]:>6} "
-                f"{cls.debug_times[name]:>10.2f} ms")
+            info(f"{name:>20} : {cls.debug_counts[name]:>6} "
+                 f"{cls.debug_times[name]:>10.2f} ms")
     
     def __init__(self, name=''):
         self.name = name
@@ -40,6 +42,17 @@ class Profile:
 
 atexit.register(Profile.print_debug_exit)
 
+def timeit(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwds):
+        name = fn_name(fn) #+ signature_str(*args, **kwds)
+        with Profile(name):
+            return fn(*args, **kwds)
+    def fn_name(fn):
+        s = str(fn)
+        try: return s.split(None, 2)[1]
+        except: return s
+    return wrapper
 
 class LogFormatter(logging.Formatter):
 

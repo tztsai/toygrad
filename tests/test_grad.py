@@ -4,7 +4,7 @@ from importer import *
 Param.rng = np.random
 np.random.seed(0)
 random.seed(0)
-setloglevel('debug')
+# setloglevel('debug')
 
 
 def checkgrad(w, lossfun):
@@ -21,8 +21,7 @@ def checkgrad(w, lossfun):
     
     Lw = lossfun(w)
     params = Lw.backward()
-    with Param.not_training():
-        g1, g2 = w.grad, numgrad(w)
+    g1, g2 = w.grad, numgrad(w)
     for p in params: p.zero_grad()
     
     if not np.allclose(g1, g2, rtol=1e-3, atol=1e-6):
@@ -40,16 +39,16 @@ w3 = Param(size=[5, 4])
 w4 = Param(size=[3, 24])
 w5 = Param(size=[16, 8])
 w6 = Param(size=[1, 8])
+b = Param(size=5)
 y = Param(size=[50, 5])
 y2 = Param(size=[2, 10], kind='constant').softmax()
 t = onehot(np.random.randint(5, size=50), k=5)
 t1 = Param(onehot([2, 3], 5))
 v = Param(size=[50, 5])
-b = Param(size=5)
 im = Param(size=[2, 3, 50, 50])
-k = Param(size=[4, 3, 3, 3])
-k1 = Param(size=[8, 4, 3, 3])
-fc = Param(size=[3872, 10])
+k = Param(size=[3, 3, 3, 3])
+k1 = Param(size=[8, 3, 4, 4])
+fc = Param(size=[3528, 10])
 L = affine(5); L(x)
 a = onehot(np.random.randint(5, size=50), 5).astype(bool)
 A1 = affine(24)
@@ -72,7 +71,7 @@ def fixed_dropout(p=0.5):
 
 model = Compose(
     affine(24), #normalize(),
-    tanh, #fixed_dropout(0.4),
+    tanh, fixed_dropout(0.4),
     affine(5), softmax
 ); model(x1)
 
@@ -89,9 +88,10 @@ for line in '''
 w: (x @ w).sigmoid().sum()
 w: (x @ w).swish().sum()
 w: ((x @ w).normalize() @ w2).mse(y)
-x1: (x1 @ w).softmax().crossentropy(t1)
-x1: A2(N(A1(x1).tanh())).softmax().log().mean()
+x1: (x1 @ w + (2*x1) @ w).softmax().crossentropy(t1)
 x1: (model(x1) + model(x1*2)).sum() #crossentropy(t1)
+x1: N(A1(x1)).mean()
+x1: A2(N(A1(x1)).relu()).softmax().mean()
 x1: model(x1).log().mean()
 x3: model2(x3).mean()
 w: w.normalize().mean()
@@ -119,15 +119,14 @@ w: v.exp().mse(y)
 w: (x @ w).mean()
 w: (x @ w).sum()
 w: w[:2, :2].sum()
-w: (x @ w + 8).mean(axis=0).sum()
+w: (x @ w + 1).mean(axis=0).sum()
 w: (x @ w + b).smce(t)
 w: [setattr(L, 'w', w), L(x).mse(y)][1]
-b: (x @ w + b).sum()
 b: (x @ w + b).tanh().sum()
-w: (x @ w + b).softmax().crossentropy(t)
 k: im.conv2d(k).maxpool().mean()
 k: im.conv2d(k[:2, :, :2, :2]).mean()
 k: im.conv2d(k, stride=2).reshape([4, -1]).sum()
+k: im.conv2d(k, stride=3).conv2d(k).mean()
 k: (im.conv2d(k, stride=2).conv2d(k1).reshape([2, -1]) @ fc).smce(y2)
 '''.strip().splitlines():
     par, expr = map(str.strip, line.split(':', 1))

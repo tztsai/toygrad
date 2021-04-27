@@ -90,8 +90,7 @@ class MLP:
         for layer in range(self.depth):
             grad = self._grads[layer]
             prev_delta = self._deltas[layer]
-            alpha = self.momentum
-            delta = alpha * prev_delta - (1 - alpha) * grad
+            delta = self.momentum * prev_delta - (1 - self.momentum) * grad
 
             # add the gradient of bias
             self.weights[layer] += self.lr * delta
@@ -99,35 +98,34 @@ class MLP:
             # record the new delta
             self._deltas[layer] = delta
 
-    def fit(self, X, Y, epochs=20, animate=False, anim_with_data=True,
+    def fit(self, X, Y, epochs=20, bs=32, animate=False, anim_with_data=True,
             plot_curves=False, eval_performance=False):
         assert X.shape[1] == self.shape[0], 'input dimension mismatch'
         assert Y.shape[1] == self.shape[-1], 'output dimension mismatch'
 
-        batches = BatchLoader(X, Y)
+        batches = BatchLoader(X, Y, batch_size=bs)
         history = {'loss': [], 'val_acc': []}
 
         for epoch in range(epochs):
             print('\nEpoch:', epoch + 1)
             loss = 0
 
-            with Profile('test MLP'):
-                output, labels = [], []
+            output, labels = [], []
 
-                for Xb, Yb in pbar(batches):
-                    # compute output
-                    Ob = self.forward(Xb)
+            for Xb, Yb in pbar(batches):
+                # compute output
+                Ob = self.forward(Xb)
 
-                    # backprop error
-                    Eb = Ob - Yb
-                    loss += np.sum(Eb ** 2)
-                    self.backward(Eb)
+                # backprop error
+                Eb = Ob - Yb
+                loss += np.sum(Eb ** 2)
+                self.backward(Eb)
 
-                    # update weights
-                    self.update()
+                # update weights
+                self.update()
 
-                    output.extend(Ob)
-                    labels.extend(Yb)
+                output.extend(Ob)
+                labels.extend(Yb)
 
             history['loss'].append(loss / len(X))
             
@@ -148,8 +146,8 @@ class MLP:
 
 def classifier(classes):
     return Compose(
-        affine(30), tanh,
-        affine(classes), tanh
+        affine(128, with_bias=0), reLU,
+        affine(classes, with_bias=0)
     )
 
 
@@ -162,13 +160,15 @@ def accuracy(out, labels):
     return (np.argmax(out, axis=1) == np.argmax(labels, axis=1)).astype(float).mean()
 
 
-setloglevel('debug')
+# setloglevel('debug')
 
 clf = classifier(10)
 
-clf2 = MLP([input_dim, 30, 10])
+clf2 = MLP([input_dim, 128, 10], lr=5e-3)
 
-clf2.fit(x_train, y_train, epochs=1)
+# with Profile('test MLP'):
+#     clf2.fit(x_train, y_train, epochs=1, bs=128)
 
-clf.fit(x_train, y_train, epochs=3, loss='l2', optimizer='sgd',
-        val_data=(x_val, y_val), metrics={'val_acc': accuracy})
+with Profile('test toych'):
+    clf.fit(x_train, y_train, epochs=1, loss='smce', bs=128, lr=0.5,
+            optimizer='sgd', val_data=(x_val, y_val), metrics={'val_acc': accuracy})

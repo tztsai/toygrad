@@ -1,18 +1,15 @@
 from importer import *
 
 class F(Operation):
-    partial = 1
+    need_init = 1
     def apply(self, x, a, k=1):
         return k*(x + a)
     
 f = F(3, k=1)
-f2 = F(3)
-f3 = f2(k=2)
 
-assert mean(np.array([1,2,3])) == 2.
 assert f(Param(100)) == 103.
+assert mean(np.array([1,2,3])) == 2.
 assert F(Param(100), 13) == 113.
-assert f3(Param(100)) == 206.
 
 class G(Operation):
     def __init__(self):
@@ -40,7 +37,6 @@ assert affine(np.zeros([5, 3]), Param((3, 4)), Param(size=4)).shape == (5, 4)
 aff = affine(10)
 assert aff(np.zeros([5, 3])).shape == (5, 10)
 
-a = meanPool(4)
-b = a(stride=2)
-c = b(Param(size=[1,3,10,10]))
-assert c.shape == (1, 3, 1, 1)
+a = meanPool(4, stride=2)
+p = a(Param(size=[1,3,10,10]))
+assert p.shape == (1, 3, 1, 1)

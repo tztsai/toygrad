@@ -39,9 +39,9 @@ t_tr, t_va, t_ts = map(partial(onehot, k=len(set(t_tr))), [t_tr, t_va, t_ts])
 #%%
 # nn = ResNet(18)
 nn = Compose(
-    conv2D(32, 3, stride=2, normalize=True),
+    conv2D(32, 3, stride=2),
     reLU, maxPool(2),
-    conv2D(64, 3, stride=2, normalize=True),
+    conv2D(64, 3, stride=2),
     reLU, maxPool(2),
     flatten, affine(10)
 )

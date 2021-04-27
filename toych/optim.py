@@ -1,9 +1,9 @@
-from .core import Param, AbstractFunction, np
+from .core import Param, np
 from .utils.dev import DefaultNone, abstractmethod, info, defaultdict
 
 
-class Optimizer(AbstractFunction):
-    """Base class of an optimizer."""
+class Optimizer:
+    """ Base class of an optimizer. """
 
     lr = 1e-3    # learning rate
     reg = None   # regularization
@@ -14,7 +14,7 @@ class Optimizer(AbstractFunction):
         self.reg = reg
         self.lamb = lamb
 
-    def apply(self, parameters):
+    def __call__(self, parameters):
         with Param.not_training():
             for par in parameters:
                 assert isinstance(par, Param) and not par.constant
@@ -26,7 +26,7 @@ class Optimizer(AbstractFunction):
     @abstractmethod
     def delta(self, parameter):
         """The amount of change of a parameter given by the optimizer."""
-        
+
     def reg_term(self, param):
         if self.reg is None:
             return 0

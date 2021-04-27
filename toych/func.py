@@ -8,13 +8,13 @@ to "tinygrad" (https://github.com/geohot/tinygrad).
 
 There can be 3 ways to apply a function or operation:
 >>> x = Param(size=[5, 3])
->>> dropout(x, 0.3)                          # available to any Function
->>> x.dropout(0.3)                           # if the function has been registered
->>> a, d = Affine(8), dropout(0.3); d(a(x))  # if the function is partial or contains __init__ method
+>>> dropout(x, 0.3)         # available to any Function
+>>> x.dropout(0.3)          # if the function has been registered
+>>> dropout(0.3)(x)         # if the function's attribute 'need_init' is True
 """
 import numpy as np
 from .core import Param, Function, Operation, registermethod
-from .utils.dev import ensure_list, abstractmethod, ABC, random, dbg, info
+from .utils.dev import ensure_list, random, wraps, dbg, info
 
 
 class UnaryOp(Operation):
@@ -49,17 +49,17 @@ class abs(UnaryOp):
     
 class reLU(UnaryOp):
     def apply(self, x):
-        self.deriv = (x >= 0.).astype(np.float)
+        self.deriv = (x >= 0.)
         return self.deriv * x
 
 class leakyReLU(UnaryOp):
-    partial = True
+    need_init = True
     def apply(self, x, negslope=0.01):
         self.deriv = np.maximum(negslope, x >= 0.)
         return self.deriv * x
 
 class dropout(UnaryOp):
-    partial = True
+    need_init = True
     def apply(self, x, p=0.5, mask=None):
         if not Param.training:
             self.deriv = 1.
@@ -91,8 +91,7 @@ class Mul(BinaryOp):
     
 class TrueDiv(BinaryOp):
     def apply(self, x, y):
-        py = self.inputs[1]
-        if isinstance(py, Param) and not py.constant:
+        if isinstance(y, np.ndarray):
             self.deriv = 1/y, -x/y**2
         else:
             self.deriv = 1/y, None
@@ -100,8 +99,7 @@ class TrueDiv(BinaryOp):
 
 class Pow(BinaryOp):
     def apply(self, x, y):
-        py = self.inputs[1]
-        if isinstance(py, Param) and not py.constant:
+        if isinstance(y, np.ndarray):
             self.deriv = y * x**(y-1), x**y * np.log(x)
         else:
             self.deriv = y * x**(y-1), None
@@ -128,9 +126,8 @@ class softmax(Operation):
 class softmaxCrossentropy(Operation):
     ndim_in, ndim_out = (1, 1), 0
     def apply(self, input, labels):
-        assert not isinstance(y := self.inputs[1], Param) or y.constant
         sample_ids = random.sample(range(len(input)), min(10, len(input)))
-        assert all(np.sum(labels[sample_ids], axis=1) == 1.)  # sanity check
+        assert np.allclose(np.sum(labels[sample_ids], axis=1), 1.)
         probabs = (ex := np.exp(input)) / np.sum(ex, axis=-1, keepdims=True)
         e = -np.sum(labels * np.log(probabs), axis=-1)
         self.deriv = (probabs - labels) / e.size, None
@@ -147,12 +144,13 @@ class MatMul(Operation):
         while x.ndim < 2: x = np.expand_dims(x, 0)
         while y.ndim < 2: y = np.expand_dims(y, -1)
         self._x, self._y = x, y
+        self._xsh, self._ysh = map(np.shape, self.inputs)
         return x @ y
     
     def backward(self, grad_out):
-        grads = [grad_out @ np.swapaxes(self._y, -1, -2),
-                 np.swapaxes(self._x, -1, -2) @ grad_out]
-        return [g.reshape(x.shape) for x, g in zip(self.inputs, grads)]
+        gx = grad_out @ np.swapaxes(self._y, -1, -2)
+        gy = np.swapaxes(self._x, -1, -2) @ grad_out
+        return gx.reshape(self._xsh), gy.reshape(self._ysh)
 
 class reshape(Operation):
     def apply(self, x, *args):
@@ -195,30 +193,28 @@ class concat(Operation):
         return np.split(grad_out, [self._i], axis=self._ax)
 
 
-def apply_to_axes(f):
-    def wrapper(self, x, axis=None, keepdims=False, out=None):
-        axes = range(np.ndim(x)) if axis is None else ensure_list(axis)
-        for i, a in enumerate(axes):
-            if a < 0: axes[i] = x.ndim + a
-        return f(self, x, tuple(axes), keepdims)
-    return wrapper
+def convert_axis(x, axis):
+    axes = range(np.ndim(x)) if axis is None else ensure_list(axis)
+    for i, a in enumerate(axes):
+        if a < 0: axes[i] = x.ndim + a
+    return tuple(axes)
 
 class sum(Operation):
-    @apply_to_axes
-    def apply(self, x, axes, keepdims=False):
-        self._sh = [1 if i in axes else s for i, s in enumerate(np.shape(x))]
-        return np.sum(x, axis=axes, keepdims=keepdims)
+    def apply(self, x, axis=None, keepdims=False, **_):
+        axis = convert_axis(x, axis)
+        self._sh = [1 if i in axis else s for i, s in enumerate(np.shape(x))]
+        return np.sum(x, axis=axis, keepdims=keepdims)
     
     def backward(self, grad_y):
         yield grad_y.reshape(self._sh) + np.zeros_like(self._x)
 
 class max(Operation):
-    @apply_to_axes
-    def apply(self, x, axes, keepdims=False):
-        y = np.max(x, axis=axes, keepdims=keepdims)
-        shape = [1 if i in axes else s for i, s in enumerate(np.shape(x))]
+    def apply(self, x, axis=None, keepdims=False, **_):
+        axis = convert_axis(x, axis)
+        y = np.max(x, axis=axis, keepdims=keepdims)
+        shape = [1 if i in axis else s for i, s in enumerate(np.shape(x))]
         t = (x == y.reshape(shape))
-        d = t.sum(axis=axes, keepdims=True)
+        d = t.sum(axis=axis, keepdims=True)
         self._sh, self._d = shape, t/d
         return y
     
@@ -278,7 +274,7 @@ def ones(*shape, kind='variable', dtype=float):
 
 class pool2D(Function):
     register = True
-    partial = True
+    need_init = True
     reduce = NotImplemented
     
     def apply(self, im, size=(2, 2), stride=1):
@@ -300,19 +296,38 @@ class maxPool(pool2D):
 
 ### operations or methods containing parameters to be initialized ###
 
+class affine(Function):
+    def __init__(self, d_out, with_bias=True):
+        self.d_out = d_out
+        self.with_bias = with_bias
+        self.built = False
+        
+    def build(self, input):
+        self.d_in = input.shape[-1]
+        self.w = Param(size=[self.d_in, self.d_out])
+        self.b = Param(size=self.d_out) if self.with_bias else None
+        self.built = True
+        dbg(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')
+
+    def update_args(self, input):
+        if not self.built: self.build(input)
+        return super().update_args(input, weight=self.w, bias=self.b)
+
+    def apply(self, input, weight, bias=None):
+        return input @ weight if bias is None else input @ weight + bias
+
 class conv2D(Operation):
     """Convolve 2D images with filters."""
     
-    def __init__(self, c_out, size, stride=1, groups=1, normalize=False):
+    def __init__(self, c_out, size, stride=1, groups=1):
         if type(size) is int: size = (size, size)
         self.c_in, self.c_out = None, c_out
-        self.size, self.stride, self.groups, self.bn = size, stride, groups, normalize
+        self.size, self.stride, self.groups = size, stride, groups
         self.built = False
 
     def build(self, input):
         self.c_in = input.shape[1]
         self.filters = Param(size=[self.c_out, self.c_in, *self.size])
-        self.bn = normalize2D() if self.bn else None
         self.built = True
         dbg('init conv2D: im_size=%s, in_channels=%d, out_channels=%d',
             input.shape[-2:], self.c_in, self.c_out)
@@ -322,12 +337,6 @@ class conv2D(Operation):
         return super().update_args(input, filters=self.filters,
                                    stride=self.stride, groups=self.groups)
     
-    def __call__(self, *args, **kwds):
-        output = super().__call__(*args, **kwds)
-        if hasattr(self, 'built') and self.built and self.bn:
-            return self.bn(output)
-        return output
-
     def apply(self, input, filters, stride=1, groups=1):
         if type(stride) is int:
             self._stride = stride = (stride, stride)
@@ -385,29 +394,8 @@ class conv2D(Operation):
             
         return gx, gf
 
-class affine(Function):
-    def __init__(self, d_out, with_bias=True):
-        self.d_out = d_out
-        self.with_bias = with_bias
-        self.built = False
-        
-    def build(self, input):
-        self.d_in = input.shape[-1]
-        self.w = Param(size=[self.d_in, self.d_out])
-        self.b = Param(size=self.d_out) if self.with_bias else 0
-        self.built = True
-        dbg(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')
-
-    def update_args(self, input):
-        if not self.built: self.build(input)
-        return super().update_args(input, weight=self.w, bias=self.b)
-
-    def apply(self, input, weight, bias):
-        return input @ weight + bias
-
 class normalize(Function):
     register = True
-    partial = True
     eps = 1e-5
     mom = 0.9
     axis = 0  # the axis along which to apply normalization
