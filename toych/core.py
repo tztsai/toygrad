@@ -172,45 +172,34 @@ class Param(np.ndarray):
         return f"{s[:-1]}, {s_kind}{s_dtype})"
 
 
-class FunctionMeta(ABCMeta):
+class FunctionMeta(type):
     def __init__(cls, name, bases, ns):
         super().__init__(name, bases, ns)
-        if not inspect.isabstract(cls):
+        if not isabstract(cls.apply):
             if cls.register:
                 registermethod(cls)
-            if cls.blackbox:
-                cls.apply = timeit(cls.apply)
             if '__init__' in ns:
                 cls.need_init = True
 
-    def __call__(cls, *args, **kwds):
-        if inspect.isabstract(cls):
-            assert len(args) == 1 and not kwds
-            return cls.fn2subclass(args[0])
-        fn = super().__call__(*args, **kwds)
-        return fn
-    
-    def fn2subclass(cls, fn):
-        assert callable(fn)
-        # if inherit: cls = type(fn)
-        bases = (cls, *cls.__bases__)
-        ns = dict(apply=staticmethod(fn))
-        inherit = isinstance(fn, Function)
-        if inherit: ns.update(parent=fn)
-        fc = FunctionMeta(fn.__name__, bases, ns)
+    def new_type(cls, fn):
+        """ Converts a function `fn` to a subclass of `cls`. """
+        assert callable(fn), f"{cls}.new_type must be applied to a callable object"
+        fc = FunctionMeta(fn.__name__, (cls, *cls.__bases__), {})
+        if isinstance(fn, cls):
+            fc.parent = fn
+            fc.apply = fn.apply
+        else:
+            fc.apply = staticmethod(fn)
         fc.__module__ = fn.__module__  # for pickle to lookup attributes?
         return fc
 
     def __repr__(cls):
         return cls.__name__
     
-    def __reduce__(self):
-        return super().__reduce__()
-    
 
 def registermethod(fn, name=None):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
-    if not isinstance(fn, type): fn = Function(fn)
+    if not isinstance(fn, type): fn = Function.new_type(fn)
     if name is None: name = fn.__name__.lower()
     setattr(Param, name, lambda *args, **kwds: fn(*args, **kwds))
     if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
@@ -220,39 +209,16 @@ def registermethod(fn, name=None):
     return fn
 
 def wrap_call(call):
-    @timeit
     @wraps(call)
     def wrapper(self, *args, **kwds):
-        # ctx = Context(self, args, kwds)
-        # if not isinstance(self, type):
         self.inputs = args
-        if hasattr(self, 'parent'):
+        if self.parent:
             args, kwds = self.parent.update_args(*args, **kwds)
         return call(self, *args, **kwds)
     return wrapper
 
-# class Context:
-#     def __init__(self, fn, args, kwds):
-#         self.inputs = args
-#         self.__fn = fn
-#         self.__cls = fn if isinstance(fn, type) else type(fn)
-#         self.__name__ = fn.__name__ + signature_str(*args, **kwds)
-#         self.apply = self.convert_method('apply')
-        
-#     def convert_method(self, method_name):
-#         method = getattr(self.__cls, method_name, False)
-#         if method is False: return method
-#         static = next(iter(inspect.signature(method).parameters)) != 'self'
-#         return method if static else partial(method, self)
-        
-#     def __getattr__(self, name):
-#         attr = getattr(self.__fn, name)
-#         return self.convert_method(name) if callable(attr) else attr
 
-#     def __repr__(self):
-#         return self.__name__
-
-class Function(ABC, metaclass=FunctionMeta):
+class Function(metaclass=FunctionMeta):
     """ Baseclass of callable classes in toych.
     The class can be directly callable like functions (if need_init=False).
     An instance of it acts as a node in the computation graph.
@@ -261,19 +227,23 @@ class Function(ABC, metaclass=FunctionMeta):
         register: whether to register this function as a method of the Param class
         blackbox: whether this appears as a single node in the compgraph
         need_init: whether this function needs to be initialized
-        make_subclass: whether to create a new subclass when need_init=True
     """
     register = False
     blackbox = True
     need_init = False  # automatically set to True if the class has __init__
-    make_subclass = True
 
-    def __new__(cls, *args, **kwds):
+    @classmethod
+    def new(cls, args, kwds):
         fn = object.__new__(cls)
-        fn.__name__ = f"{cls.__name__}{signature_str(*args, **kwds)}"
+        fn.signature = (cls, args, kwds)
+        fn.parent = getattr(cls, 'parent', None)
+        return fn
+        
+    def __new__(cls, *args, **kwds):
+        fn = cls.new(args, kwds)
         if cls.need_init and not array_at_first(args):
             fn.__init__(*args, **kwds)
-            return Function(fn) if cls.make_subclass else fn
+            return Function.new_type(fn)
         else:
             return fn(*args, **kwds)
 
@@ -283,6 +253,7 @@ class Function(ABC, metaclass=FunctionMeta):
     @abstractmethod
     def apply(self, *args, **kwds): NotImplemented
 
+    @timeit
     def __call__(self, *args, **kwds):
         output = self.apply(*args, **kwds)
         if isinstance(output, Param) and self.blackbox:
@@ -293,11 +264,17 @@ class Function(ABC, metaclass=FunctionMeta):
 
     def update_args(self, *args, **kwds):
         try: args, kwds = args + self.args, {**self.kwds, **kwds}
-        except: pass
+        except AttributeError: pass
         return args, kwds
     
-    def __repr__(self):
-        return self.__name__
+    @property
+    def __name__(self):
+        if not hasattr(self, '__name'):
+            fn, args, kwds = self.signature
+            self.__name = repr(fn) + signature_str(*args, **kwds)
+        return self.__name
+    
+    def __repr__(self): return self.__name__
 
 
 class Operation(Function):
@@ -345,6 +322,7 @@ class Operation(Function):
         if bc_axes: grad = np.sum(grad, axis=tuple(bc_axes))
         return grad.reshape(np.shape(input))
 
+    @timeit
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
         binds = bind_pars(self.apply, *args, **kwds)

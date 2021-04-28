@@ -1,19 +1,21 @@
-from .core import Param, np
-from .utils.dev import DefaultNone, abstractmethod, info, defaultdict
+from .core import Function, Param, np
+from .utils.dev import abstractmethod, info, defaultdict
 
 
-class Optimizer:
+class Optimizer(Function):
     """ Base class of an optimizer. """
 
     lr = 1e-3    # learning rate
     reg = None   # regularization
     lamb = 2e-3  # coefficient of regularization (lambda)
 
-    def __init__(self, lr=lr, reg=reg, lamb=lamb):
-        self.lr = lr
-        self.reg = reg
-        self.lamb = lamb
-
+    def __new__(cls, lr=lr, *, reg=None, lamb=None, **kwds):
+        kwds.update((k, v) for k, v in locals().items()
+                    if k not in ['cls', 'kwds'] and v is not None)
+        opt = cls.new((), kwds)
+        opt.__dict__.update(kwds)
+        return opt
+        
     def __call__(self, parameters):
         with Param.not_training():
             for par in parameters:
@@ -44,16 +46,14 @@ class Optimizer:
 
 class SGD(Optimizer):
     lr = 1e-3
-    m = 0.8
+    mom = 0.8
     
-    def __init__(self, lr=lr, mom=m, **kwds):
-        super().__init__(lr, **kwds)
-        self.m = mom
+    def __init__(self, lr=lr, *, mom=mom, **kwds):
         self.old_delta = {}
         
     def delta(self, p):
         if p in self.old_delta:
-            delta = self.m * self.old_delta[p] - (1-self.m) * p.grad
+            delta = self.mom * self.old_delta[p] - (1-self.mom) * p.grad
         else:
             delta = -p.grad
         self.old_delta[p] = delta
@@ -64,15 +64,13 @@ class Adam(Optimizer):
     b1 = 0.9
     b2 = 0.999
     eps = 1e-8
-        
-    def __init__(self, lr=lr, b1=b1, b2=b2, eps=eps, **kwds):
-        super().__init__(lr, **kwds)
-        self.b1, self.b2, self.eps = b1, b2, eps
+
+    def __init__(self, lr=lr, *, b1=None, b2=None, eps=None, **kwds):
         self.t, self.m, self.v = 0, defaultdict(float), defaultdict(float)
 
-    def apply(self, params):
+    def __call__(self, params):
         self.t += 1
-        super().apply(params)
+        super().__call__(params)
 
     def delta(self, p):
         self.m[p] = self.b1 * self.m[p] + (1. - self.b1) * p.grad

@@ -7,19 +7,21 @@ class F(Operation):
     
 f = F(3, k=1)
 
-assert f(Param(100)) == 103.
 assert mean(np.array([1,2,3])) == 2.
+assert f(Param(100)) == 103.
 assert F(Param(100), 13) == 113.
 
 class G(Operation):
     def __init__(self):
         self.w = Param([1, 2, 3])
-        super().__init__(self.w)
+    def update_args(self, x):
+        return super().update_args(x, w=self.w)
     def apply(self, x, w):
         return x + w
 
 g = G()
-assert (g(2) == [3, 4, 5]).all().item()
+repr(g); repr(g)
+assert (g(2) == G(g.parent.w, 2)).all().item()
     
 class H(Function):
     def __init__(self):

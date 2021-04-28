@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from collections import defaultdict, namedtuple
 from typing import Union, Optional, List, Tuple
 from types import FunctionType
-from abc import ABC, ABCMeta, abstractmethod
 
 
 class Profile:
@@ -50,8 +49,8 @@ def timeit(fn):
             return fn(*args, **kwds)
     def fn_name(fn):
         s = str(fn)
-        try: return s.split(None, 2)[1]
-        except: return s
+        if s[0] == '<': s = s.split(None, 2)[1]
+        return s
     return wrapper
 
 class LogFormatter(logging.Formatter):
@@ -112,52 +111,62 @@ def backward_stack():
     stk = inspect.stack()
     return [f.frame.f_locals['ctx'] for f in stk if f.function == '_backward']
 
+def abstractmethod(mtd):
+    @wraps(mtd)
+    def call(self, *args, **kwds):
+        raise NotImplementedError
+    call.__isabstractmethod__ = True
+    return call
+    
+def isabstract(obj):
+    return getattr(obj, "__isabstractmethod__", False)
+
 def decorator(dec):
     @wraps(dec)
     def wrapped(f):
         return wraps(f)(dec(f))
     return wrapped
 
-@contextmanager
-def set_temporarily(obj, attr, val):
-    cur_val = getattr(obj, attr)
-    setattr(obj, attr, val)
-    yield
-    setattr(obj, attr, cur_val)
+# @contextmanager
+# def set_temporarily(obj, attr, val):
+#     cur_val = getattr(obj, attr)
+#     setattr(obj, attr, val)
+#     yield
+#     setattr(obj, attr, cur_val)
     
-def DefaultNone(cls):
-    """A class decorator that changes the `__getattribute__` method so that for
-       instances of the decorated class, if any of its instance attribute is None and
-       the corresponding class attribute exists, then returns the class attribute instead.
-    """
-    # keep the original __getattribute__ method
-    getattribute = cls.__getattribute__
-    def get(self, name):
-        value = getattribute(self, name)
-        if value is None and hasattr(type(self), name):
-            return getattr(type(self), name)  # get the class attribute
-        return value
-    cls.__getattribute__ = get
-    return cls
+# def DefaultNone(cls):
+#     """A class decorator that changes the `__getattribute__` method so that for
+#        instances of the decorated class, if any of its instance attribute is None and
+#        the corresponding class attribute exists, then returns the class attribute instead.
+#     """
+#     # keep the original __getattribute__ method
+#     getattribute = cls.__getattribute__
+#     def get(self, name):
+#         value = getattribute(self, name)
+#         if value is None and hasattr(type(self), name):
+#             return getattr(type(self), name)  # get the class attribute
+#         return value
+#     cls.__getattribute__ = get
+#     return cls
 
-class Cache(dict):
-    def __init__(self, size=32):
-        self.size = size
-        self.queue = []
-        self._cnt = 0
+# class Cache(dict):
+#     def __init__(self, size=32):
+#         self.size = size
+#         self.queue = []
+#         self._cnt = 0
         
-    def __contains__(self, key):
-        ret = super().__contains__(key)    
-        if ret: self._cnt += 1
-        return ret
+#     def __contains__(self, key):
+#         ret = super().__contains__(key)    
+#         if ret: self._cnt += 1
+#         return ret
     
-    def __setitem__(self, key, value):
-        if key not in self:
-            self.queue.append(key)
-        if len(self.queue) > self.size:
-            for _ in range(5):
-                del self[self.queue.pop(0)]
-        super().__setitem__(key, value)
+#     def __setitem__(self, key, value):
+#         if key not in self:
+#             self.queue.append(key)
+#         if len(self.queue) > self.size:
+#             for _ in range(5):
+#                 del self[self.queue.pop(0)]
+#         super().__setitem__(key, value)
 
 
 # class NameSpace(dict):

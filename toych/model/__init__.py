@@ -9,14 +9,11 @@ class Model(Function):
     """ Baseclass of learning models.
     Wrap any function `f` by `Model(f)` to convert it to a model.
     """
-    need_init = True
-    make_subclass = False
     
     def __new__(cls, *args, **kwds):
         if cls is Model:
-            assert len(args) == 1 and not kwds
-            cls.apply = staticmethod(args[0])
-        return super().__new__(*args, **kwds)
+            return Model.new_type(*args, **kwds)
+        return cls.new(args, kwds)
     
     def fit(self, input, target, *, epochs=20, lr=None, bs=None, optimizer='adam',
             loss='l2', val_data=None, metrics={}, callbacks=()) -> dict:
