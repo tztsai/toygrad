@@ -46,6 +46,7 @@ t = onehot(np.random.randint(5, size=50), k=5)
 t1 = Param(onehot([2, 3], 5))
 v = Param(size=[50, 5])
 im = Param(size=[2, 3, 50, 50])
+im2 = Param(size=[1, 2, 8, 8])
 k = Param(size=[3, 3, 3, 3])
 k1 = Param(size=[8, 3, 4, 4])
 fc = Param(size=[3528, 10])
@@ -55,6 +56,7 @@ A1 = affine(24)
 A2 = affine(5)
 N = normalize()
 A2(N(A1(x1)))
+C = conv2D(3, size=2); C(im2)
 
 
 def fixed_dropout(p=0.5):
@@ -128,6 +130,7 @@ k: im.conv2d(k[:2, :, :2, :2]).mean()
 k: im.conv2d(k, stride=2).reshape([4, -1]).sum()
 k: im.conv2d(k, stride=3).conv2d(k).mean()
 k: (im.conv2d(k, stride=2).conv2d(k1).reshape([2, -1]) @ fc).smce(y2)
+im2: C(im2).normalize2d().maxpool().mean()
 '''.strip().splitlines():
     par, expr = map(str.strip, line.split(':', 1))
     if par.startswith('#'): continue

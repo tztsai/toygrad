@@ -17,11 +17,12 @@ class G(Operation):
     def update_args(self, x):
         return super().update_args(x, w=self.w)
     def apply(self, x, w):
+        assert all(not isinstance(a, Param) for a in [x, w])
         return x + w
 
 g = G()
 repr(g); repr(g)
-assert (g(2) == G(g.parent.w, 2)).all().item()
+assert (g(Param([3])) == G(Param([3]), g.parent.w)).all().item()
     
 class H(Function):
     def __init__(self):

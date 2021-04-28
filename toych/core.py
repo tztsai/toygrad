@@ -12,7 +12,7 @@ class Param(np.ndarray):
     training = True
     kinds = dict(constant=0, variable=1, trainable=2)
     rng = np.random.default_rng()
-    grad_lim = 100.  # magnitude limit of each element of the gradient
+    grad_lim = None  # magnitude limit of each element of the gradient
     auto_name = False  # auto name the Param by the variable name (unreliable!)
     random_init = 'he'  # method of random initialization
 
@@ -84,7 +84,7 @@ class Param(np.ndarray):
         if self.constant or not Param.training: return
         if np.shape(grad) != self.shape:
             raise ValueError('gradient shape mismatch')
-        self._grad = np.clip(grad, -self.grad_lim, self.grad_lim)
+        self._grad = grad
         
     @property
     def grad_clean(self):
@@ -92,6 +92,9 @@ class Param(np.ndarray):
 
     def zero_grad(self):
         if not self.constant: self._grad = 0
+
+    def clip_grad(self, maglim=10.):
+        self.grad = np.clip(self.grad, -maglim, maglim)
     
     @classmethod
     @contextmanager
@@ -101,12 +104,8 @@ class Param(np.ndarray):
 
     @property
     def data(self): return np.asarray(self)
-
-    @timeit
-    def backward(self):
-        if not Param.training: return
-        assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
-        
+    
+    def deepwalk(self):
         stack, visited, params = [[0, self]], {self}, []
         while stack:  # toposort the related params
             exiting, param = stack.pop()
@@ -118,15 +117,21 @@ class Param(np.ndarray):
                 [[visited.add(p), stack.append([0, p])]
                  for p in reversed(param._ctx.inputs)
                  if isinstance(p, Param) and not p.constant and p not in visited]
+        return params
 
+    @timeit
+    def backward(self):
+        if not Param.training: return
+        assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
+        params = self.deepwalk()
         self.grad = np.ones(self.shape)
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
             assert not y.grad_clean
             x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
-                if isinstance(x, Param) and not x.constant: x.grad += g
-                
+                if isinstance(x, Param) and not x.constant:
+                    x.grad = g if x.grad_clean else x.grad + g
         return (p for p in params if p.trainable)
 
     def view(self, *args):
@@ -187,7 +192,7 @@ class FunctionMeta(type):
         fc = FunctionMeta(fn.__name__, (cls, *cls.__bases__), {})
         if isinstance(fn, cls):
             fc.parent = fn
-            fc.apply = fn.apply
+            fc.need_init = False
         else:
             fc.apply = staticmethod(fn)
         fc.__module__ = fn.__module__  # for pickle to lookup attributes?
@@ -209,6 +214,7 @@ def registermethod(fn, name=None):
     return fn
 
 def wrap_call(call):
+    @timeit
     @wraps(call)
     def wrapper(self, *args, **kwds):
         self.inputs = args
@@ -243,7 +249,7 @@ class Function(metaclass=FunctionMeta):
         fn = cls.new(args, kwds)
         if cls.need_init and not array_at_first(args):
             fn.__init__(*args, **kwds)
-            return Function.new_type(fn)
+            return cls.new_type(fn)
         else:
             return fn(*args, **kwds)
 
@@ -253,7 +259,6 @@ class Function(metaclass=FunctionMeta):
     @abstractmethod
     def apply(self, *args, **kwds): NotImplemented
 
-    @timeit
     def __call__(self, *args, **kwds):
         output = self.apply(*args, **kwds)
         if isinstance(output, Param) and self.blackbox:
@@ -322,7 +327,6 @@ class Operation(Function):
         if bc_axes: grad = np.sum(grad, axis=tuple(bc_axes))
         return grad.reshape(np.shape(input))
 
-    @timeit
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
         binds = bind_pars(self.apply, *args, **kwds)
