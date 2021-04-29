@@ -25,7 +25,7 @@ def checkgrad(w, lossfun):
     for p in params: p.zero_grad()
     
     if not np.allclose(g1, g2, rtol=1e-3, atol=1e-6):
-        # graph.show_compgraph(Lw)
+        # graph.show_graph(Lw)
         raise AssertionError(str(np.abs(g1-g2).max()))
     
 

@@ -4,41 +4,24 @@ from .utils.dev import *
 
 class Param(np.ndarray):
     """ A parameter in the toych model.
-    There are three kinds of Param objects:
-    - constant: does not participate in the autograd
-    - variable: passes gradients during the autograd but cannot be trained
-    - trainable: stores an array of gradients and can be updated by the optimizer
+    
+    Attributes:
+    - kinds:
+      - constant: does not participate in the autograd
+      - variable: passes gradients during the autograd but cannot be trained
+      - trainable: stores an array of gradients and can be updated by the optimizer
+    - rng: random generator
+    - training: whether the grad of the Param can be updated
+    - auto_name: auto name the Param by the variable name (unreliable!)
+    - random_init: method of random initialization
     """
     kinds = dict(constant=0, variable=1, trainable=2)
-    rng = np.random.default_rng()  # random generator
+    rng = np.random.default_rng()
     training = True
-    auto_name = False  # auto name the Param by the variable name (unreliable!)
-    random_init = 'he'  # method of random initialization
+    auto_name = False
+    random_init = 'he'
 
-    def __new__(cls, value=None, *, size=None, dtype=None, mean=0.,
-                scale=None, kind=None, name=None):
-        """
-        If `value` is given, then it will be converted to a Param.
-        The default `kind` in this case is "variable".
-        If the first argument is a tuple, then it will be considered as `size`
-        instead of `value`, i.e. `Param((...))` is equivalent to `Param(size=(...))`.
-        If `dtype` is the same as that of the given `value`, then a view of
-        `value` will be returned, so its data will not be copied.
-        However, if `size` is additionally specified, then a new Param
-        of this size will be created filled with the given `value`.
-        
-        If `value` is not given, a random Param following normal
-        distribution will be generated. `mean` and `scale` of the distribution
-        can be specified, but if `scale` is not provided, initialization methods
-        like 'he' or 'xavier' will be used to compute the scale.
-        The default `kind` in this case is "trainable".
-        
-        >>> Param([[1,2,3],[4,5,6]])
-        >>> Param(size=[4, 4], dtype=np.float32, scale=1)
-        >>> Param(0, size=[5, 5])
-        >>> w = Param(size=[5, 3])
-        >>> w is Param(w)
-        """
+    def __new__(cls, value=None, *, size=None, dtype=None, mean=0., scale=None, **kwds):
         if type(value) is tuple:  # a tuple specifies the size instead of value
             value, size = None, value
         if value is None:  # random initialization
@@ -46,14 +29,15 @@ class Param(np.ndarray):
             if size is None: scale = 1.
             elif scale is None: scale = cls.random_init
             if type(scale) is str:
-                d_in = size if isinstance(size, int) else size[0]
+                try: d_in = size[0]
+                except: d_in = size
                 scale = cls.init_scale(d_in, scale)
             value = cls.rng.normal(size=size, loc=mean, scale=scale)
         else:
             if size is not None:  # fill the value in an array of the given size
                 value = np.full(size, value, dtype=dtype)
         return np.asarray(value, dtype=dtype).view(cls)
-    
+
     @staticmethod
     def init_scale(d_in, method):
         if method == 'he':
@@ -67,13 +51,39 @@ class Param(np.ndarray):
             self.__init__(kind='constant')
         
     def __init__(self, value=None, *, kind=None, name=None, **kwds):
+        """ Create a Param.
+        
+        Args:
+        - value:
+        - If `value` is given, then it will be converted to a Param.
+            The default `kind` in this case is "variable".
+            If the first argument is a tuple, then it will be considered as `size`
+            instead of `value`, i.e. `Param((...))` is equivalent to `Param(size=(...))`.
+            If `dtype` is the same as that of the given `value`, then a view of
+            `value` will be returned, so its data will not be copied.
+            However, if `size` is additionally specified, then a new Param
+            of this size will be created filled with the given `value`.
+        - If `value` is not given, a random Param following normal
+            distribution will be generated. `mean` and `scale` of the distribution
+            can be specified, but if `scale` is not provided, initialization methods
+            like 'he' or 'xavier' will be used to compute the scale.
+            The default `kind` in this case is "trainable".
+        - kind: 'constant' / 0, 'variable' / 1, 'trainable' / 2
+        
+        Examples:
+        >>> Param([[1,2,3],[4,5,6]])
+        >>> Param(size=[4, 4], dtype=np.float32, scale=1)
+        >>> Param(0, size=[5, 5])
+        >>> w = Param(size=[5, 3])
+        >>> w is Param(w)
+        """
         if kind is None:
             kind = 'trainable' if isinstance(value, (type(None), tuple)) else 'variable'
         self.kind = Param.kinds.get(kind, kind)
         assert self.kind in Param.kinds.values()
         self.name = name
         self._ctx = None
-        self._grad = 0 if not self.constant else None
+        self._grad = None
 
     @property
     def grad(self): return self._grad
@@ -86,15 +96,11 @@ class Param(np.ndarray):
         self._grad = grad
         
     @property
-    def grad_clean(self):
-        return id(self.grad) in [id(0), id(None)]
+    def has_grad(self):
+        return self.grad is not None
 
     def zero_grad(self):
-        if not self.constant: self._grad = 0
-
-    def shrink_grad(self, maxmag):
-        scale = maxmag / max(-self.grad.min(), self.grad.max())
-        if scale < 1: self.grad *= scale
+        self._grad = None
     
     @classmethod
     @contextmanager
@@ -127,11 +133,10 @@ class Param(np.ndarray):
         self.grad = np.ones(self.shape)
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
-            assert not y.grad_clean
             x_grads = ctx.backward(y.grad)
             for x, g in zip(ctx.inputs, x_grads):
                 if isinstance(x, Param) and not x.constant:
-                    x.grad = g if x.grad_clean else x.grad + g
+                    x.grad = x.grad + g if x.has_grad else g
         return (p for p in params if p.trainable)
 
     def view(self, *args):
@@ -154,7 +159,7 @@ class Param(np.ndarray):
         pickled_state = super().__reduce__()
         my_state = self.__dict__.copy()
         my_state['_ctx'] = None
-        my_state['_grad'] = 0 if self.trainable else None
+        my_state['_grad'] = None
         return (*pickled_state[:2], (*pickled_state[2], my_state))
         
     def __setstate__(self, state):
@@ -195,7 +200,7 @@ class FunctionMeta(type):
             fc.need_init = False
         else:
             fc.apply = staticmethod(fn)
-        fc.__module__ = fn.__module__  # for pickle to lookup attributes?
+        fc.__module__ = fn.__module__
         return fc
 
     def __repr__(cls):
@@ -229,9 +234,9 @@ class Function(metaclass=FunctionMeta):
     An instance of it acts as a node in the computation graph.
     
     Attributes:
-        register: whether to register this function as a method of the Param class
-        blackbox: whether this appears as a single node in the compgraph
-        need_init: whether this function needs to be initialized
+    - register: whether to register this function as a method of the Param class
+    - blackbox: whether this appears as a single node in the compgraph
+    - need_init: whether this function needs to be initialized
     """
     register = False
     blackbox = True
@@ -289,7 +294,7 @@ class Operation(Function):
     then `self.deriv.shape` should be (2,3,4) with `self.deriv[i,j,k] = dy[k] / dx[i,j]`.
     
     Attributes:
-        ndim_in, ndim_out: least num of dims of input(s) and output
+    - ndim_in, ndim_out: least num of dims of input(s) and output
     """
     register = True
     blackbox = False

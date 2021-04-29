@@ -4,6 +4,7 @@ import atexit
 import random
 import re
 import inspect
+import pprint
 import itertools
 import numpy as np
 from queue import Queue
@@ -94,8 +95,18 @@ def pbar(iterable, unit='batch', **kwds):
     return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)
     
 def signature_str(*args, **kwds):
-    kwdstrs = [f'{k}={repr(v)}' for k, v in kwds.items()]
-    return f"({', '.join([*map(repr, args), *kwdstrs])})"
+    ss = list(map(repr, args)) + [f'{k}={v}' for k, v in kwds.items()]
+    l = 0
+    for i, s in enumerate(ss):
+        l += len(s)
+        if l > 60:
+            ss[i] = '\n' + ss[i]
+            l = 0
+    s = ', '.join(ss)
+    if '\n' in s:
+        return '(\n  %s\n)' % s.replace('\n', '\n  ')
+    else:
+        return '(%s)' % s
 
 def array_at_first(args):
     return args and isinstance(args[0], np.ndarray)

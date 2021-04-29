@@ -3,14 +3,21 @@ from .utils.dev import abstractmethod, info, defaultdict
 
 
 class Optimizer(Function):
-    """ Base class of an optimizer. """
+    """ Baseclass of an optimizer. 
+    
+    Attributes:
+    - lr: learning rate
+    - reg: regularization
+        None, 'l1' / 'lasso', 'l2' / 'ridge' or a function.
+    - lamb: coefficient of regularization (lambda)
+    - grad_lim: max magnitude of numbers in the gradient
+    """
+    lr = 1e-3
+    reg = None   
+    lamb = 2e-3
+    grad_lim = None
 
-    lr = 1e-3    # learning rate
-    reg = None   # regularization
-    lamb = 2e-3  # coefficient of regularization (lambda)
-    grad_lim = None  # limit of the max magnitude of numbers in a gradient
-
-    def __new__(cls, lr=lr, *, reg=None, lamb=None, **kwds):
+    def __new__(cls, lr=lr, *, reg=None, lamb=None, grad_lim=None, **kwds):
         kwds.update((k, v) for k, v in locals().items()
                     if k not in ['cls', 'kwds'] and v is not None)
         opt = cls.new((), kwds)
@@ -20,13 +27,18 @@ class Optimizer(Function):
     def __call__(self, parameters):
         with Param.not_training():
             for par in parameters:
-                assert isinstance(par, Param) and not par.constant
+                assert isinstance(par, Param) and par.has_grad
                 if self.grad_lim:
-                    par.shrink_grad(self.grad_lim)
+                    self.shrink_grad(par)
                 par += self.delta(par)
                 if self.reg:
                     par += self.lr * self.lamb * self.reg_term(par)
                 par.zero_grad()
+
+    def shrink_grad(self, param):
+        scale = self.grad_lim / max(-param.grad.min(), param.grad.max())
+        assert scale > 0
+        if scale < 1: param.grad *= scale
 
     @abstractmethod
     def delta(self, parameter):

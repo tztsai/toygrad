@@ -3,3 +3,4 @@ matplotlib
 tqdm
 python-graphviz
 gym
+moviepy

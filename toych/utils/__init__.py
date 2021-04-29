@@ -3,7 +3,6 @@ import inspect
 import pickle
 import random
 import itertools
-import moviepy
 import numpy as np
 # import matplotlib.pyplot as plt
 from collections import defaultdict
@@ -78,7 +77,8 @@ def setparnames(**bindings):
             par.name = name
 
 def makegif(frames, filename='_tmp_.gif', fps=60, **kwds):
-    clip = moviepy.editor.VideoClip(frames.__getitem__)
+    from moviepy.editor import VideoClip
+    clip = VideoClip(frames)
     clip.write_gif(filename, fps=fps)
     
 # def discretize(x, splits):

@@ -29,7 +29,7 @@ def nodelabel(node):
         lb = NODES[nid][1]
     return lb
 
-def dot_graph(graph, graphname='_temp_graph'):
+def dot_graph(graph):
     def add_edges(graph):
         def add_node(n):
             nid = str(random.random()) if isinstance(n, numbers.Number) else hex(id(n))
@@ -40,12 +40,12 @@ def dot_graph(graph, graphname='_temp_graph'):
         for child in children:
             g.edge(add_node(child[0]), add_node(node))
             add_edges(child)
-    g = gv.Digraph(graphname)
+    g = gv.Digraph()
     add_edges(graph)
     return g
 
-def compgraph(param):
-    def search(y, visited={None}):
+def deepwalk(param):
+    def walk(y, visited={None}):
         try:
             ctx = y._outer_ctx
         except:
@@ -53,18 +53,18 @@ def compgraph(param):
             except: return [y]
         if ctx in visited: return [y]
         visited.add(ctx)
-        ret = [y, [ctx, *[search(x, visited) for x in ctx.inputs]]]
+        ret = [y, [ctx, *[walk(x, visited) for x in ctx.inputs]]]
         if ctx.parent:
             ret[1].insert(0, ApplyNode())
             ret[1][1] = [ctx]
         return ret
-    return search(param)
+    return walk(param)
 
 class ApplyNode:
     def __str__(self): return 'apply'
 
 
-def show_compgraph(param, filename=None):
-    dot = dot_graph(compgraph(param))
+def show_graph(param, filename=None):
+    dot = dot_graph(deepwalk(param))
     dot.render(filename=filename, format='png', view=True, cleanup=bool(filename))
     return dot

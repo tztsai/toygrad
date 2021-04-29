@@ -13,4 +13,4 @@ labels = Param(utils.onehot(np.random.randint(10, size=100), 10))
 
 loss = nn(ims).smce(labels)
 loss.backward()
-show_compgraph(loss)
+show_graph(loss)

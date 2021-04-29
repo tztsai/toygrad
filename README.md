@@ -78,7 +78,7 @@ x1(<10, 4>, trainable)  # the default kind of a random Param is "trainable"
 >>> y = tc.utils.onehot(np.random.randint(3, size=10), k=3)  # OK to directly use numpy arrays
 >>> e = (x @ w + b).smce(y); e  # softmax cross-entropy
 e(1.03, variable)
->>> tc.utils.graph.show_compgraph(e)  # see the graph below
+>>> tc.utils.graph.show_graph(e)  # see the graph below
 <graphviz.dot.Digraph object at ...>
 >>> def SGD(pars):
         for p in pars:
