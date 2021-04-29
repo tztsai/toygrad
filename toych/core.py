@@ -9,10 +9,9 @@ class Param(np.ndarray):
     - variable: passes gradients during the autograd but cannot be trained
     - trainable: stores an array of gradients and can be updated by the optimizer
     """
-    training = True
     kinds = dict(constant=0, variable=1, trainable=2)
-    rng = np.random.default_rng()
-    grad_lim = None  # magnitude limit of each element of the gradient
+    rng = np.random.default_rng()  # random generator
+    training = True
     auto_name = False  # auto name the Param by the variable name (unreliable!)
     random_init = 'he'  # method of random initialization
 
@@ -93,8 +92,9 @@ class Param(np.ndarray):
     def zero_grad(self):
         if not self.constant: self._grad = 0
 
-    def clip_grad(self, maglim=10.):
-        self.grad = np.clip(self.grad, -maglim, maglim)
+    def shrink_grad(self, maxmag):
+        scale = maxmag / max(-self.grad.min(), self.grad.max())
+        if scale < 1: self.grad *= scale
     
     @classmethod
     @contextmanager
@@ -214,7 +214,6 @@ def registermethod(fn, name=None):
     return fn
 
 def wrap_call(call):
-    @timeit
     @wraps(call)
     def wrapper(self, *args, **kwds):
         self.inputs = args
@@ -237,13 +236,6 @@ class Function(metaclass=FunctionMeta):
     register = False
     blackbox = True
     need_init = False  # automatically set to True if the class has __init__
-
-    @classmethod
-    def new(cls, args, kwds):
-        fn = object.__new__(cls)
-        fn.signature = (cls, args, kwds)
-        fn.parent = getattr(cls, 'parent', None)
-        return fn
         
     def __new__(cls, *args, **kwds):
         fn = cls.new(args, kwds)
@@ -252,6 +244,13 @@ class Function(metaclass=FunctionMeta):
             return cls.new_type(fn)
         else:
             return fn(*args, **kwds)
+
+    @classmethod
+    def new(cls, args, kwds):
+        fn = object.__new__(cls)
+        fn.signature = (cls, args, kwds)
+        fn.parent = getattr(cls, 'parent', None)
+        return fn
 
     def __init__(self, *args, **kwds):
         self.args, self.kwds = args, kwds
@@ -293,6 +292,7 @@ class Operation(Function):
         ndim_in, ndim_out: least num of dims of input(s) and output
     """
     register = True
+    blackbox = False
     ndim_in, ndim_out = 0, 0
     
     def backward(self, grad_out):
@@ -329,27 +329,31 @@ class Operation(Function):
 
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
-        binds = bind_pars(self.apply, *args, **kwds)
+        pars = args + tuple(kwds.values())
         
         try:
-            p0 = next(p for p in binds.values() if isinstance(p, Param))
-            dtype = p0.dtype
+            dtype = next(p for p in pars if isinstance(p, Param)).dtype
         except StopIteration:  # no Params in the arguments
             return self.apply(*args, **kwds)
 
         kind = 'constant'  # parameter type of the output
         def param2array(x):
-            nonlocal kind
             if isinstance(x, Param):
-                if not x.constant: kind = 'variable'
+                if not x.constant:
+                    nonlocal kind
+                    kind = 'variable'
                 return np.asarray(x)
             return x
-        args = [param2array(arg) for arg in args]
-        kwds = {key: param2array(val) for key, val in kwds.items()}
-
-        for name, val in bind_pars(self.apply, *args, **kwds).items():
-            setattr(self, '_'+name, val)  # store inputs for backward
-
+        
+        def map_pars(fn, obj):
+            if type(obj) is tuple:
+                return tuple(map_pars(fn, x) for x in obj)
+            elif type(obj) is dict:
+                return {k: map_pars(fn, x) for k, x in obj.items()}
+            else:
+                return fn(obj)
+        
+        args, kwds = map_pars(param2array, (args, kwds))
         output = Param(self.apply(*args, **kwds), dtype=dtype, kind=kind)
         output._ctx = self
         return output

@@ -11,7 +11,7 @@ NODES = {}  # {id: (node, label)}
 def nodelabel(node):
     if not isinstance(node, np.ndarray):
         if isinstance(node, Function):
-            return str(node) if node.wait_inputs else str(type(node))
+            return str(type(node))
         return str(node)
     nid = id(node)
     if nid not in NODES:
@@ -56,7 +56,7 @@ def compgraph(param):
         ret = [y, [ctx, *[search(x, visited) for x in ctx.inputs]]]
         if ctx.parent:
             ret[1].insert(0, ApplyNode())
-            ret[1][1] = [ctx.parent]
+            ret[1][1] = [ctx]
         return ret
     return search(param)
 
@@ -67,6 +67,4 @@ class ApplyNode:
 def show_compgraph(param, filename=None):
     dot = dot_graph(compgraph(param))
     dot.render(filename=filename, format='png', view=True, cleanup=bool(filename))
-    # for f in os.listdir():
-    #     if '_temp_graph' in f: os.remove(f)
     return dot

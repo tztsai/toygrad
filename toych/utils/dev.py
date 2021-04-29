@@ -22,7 +22,7 @@ class Profile:
 
     @classmethod
     def print_debug_exit(cls):
-        info('\n----------------------  COUNT --- TIME COST ---------------------')
+        info('\n----------------------  COUNT --- TIME COST')
         for name, _ in sorted(cls.debug_times.items(), key=lambda x: -x[1]):
             info(f"{name:>20} : {cls.debug_counts[name]:>6} "
                  f"{cls.debug_times[name]:>10.2f} ms")
@@ -41,11 +41,10 @@ class Profile:
 
 atexit.register(Profile.print_debug_exit)
 
-def timeit(fn):
+def timeit(fn, name=None):
     @wraps(fn)
     def wrapper(*args, **kwds):
-        name = fn_name(fn) #+ signature_str(*args, **kwds)
-        with Profile(name):
+        with Profile(name or fn_name(fn)):
             return fn(*args, **kwds)
     def fn_name(fn):
         s = str(fn)
@@ -101,11 +100,36 @@ def signature_str(*args, **kwds):
 def array_at_first(args):
     return args and isinstance(args[0], np.ndarray)
 
-def bind_pars(f, *args, **kwds):
-    s = inspect.signature(f)
-    bound_pars = s.bind(*args, **kwds)
-    bound_pars.apply_defaults()
-    return bound_pars.arguments
+# @timeit
+# def bind_pars(f, *args, **kwds):
+#     s = _signature_cache.get(f, None) 
+#     if s is None:
+#         s = inspect.signature(f)
+#         _signature_cache[f] = s
+#     bound_pars = s.bind(*args, **kwds)
+#     bound_pars.apply_defaults()
+#     return bound_pars.arguments, s.parameters
+# _signature_cache = {}
+
+# def map_pars(fn, pars, binds, args, kwds):
+#     args1, kwds1 = [], {}
+#     kw_flag = False
+#     for k, p in pars.items():
+#         v = binds[k]
+#         if p.kind == p.VAR_POSITIONAL:
+#             v = tuple(map(fn, v))
+#             args1.extend(v)
+#         elif p.kind == p.VAR_KEYWORD:
+#             v = {s: fn(x) for s, x in v.items()}
+#             kwds1.update(v)
+#         else:
+#             v = fn(v)
+#             if k not in kwds and p.kind != p.KEYWORD_ONLY:
+#                 if not kw_flag: args1.append(v)
+#             else:
+#                 kwds1[k] = v
+#                 kw_flag = True
+#     return args1, kwds1
 
 def backward_stack():
     stk = inspect.stack()
@@ -120,12 +144,6 @@ def abstractmethod(mtd):
     
 def isabstract(obj):
     return getattr(obj, "__isabstractmethod__", False)
-
-def decorator(dec):
-    @wraps(dec)
-    def wrapped(f):
-        return wraps(f)(dec(f))
-    return wrapped
 
 # @contextmanager
 # def set_temporarily(obj, attr, val):

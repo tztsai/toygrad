@@ -8,6 +8,7 @@ class Optimizer(Function):
     lr = 1e-3    # learning rate
     reg = None   # regularization
     lamb = 2e-3  # coefficient of regularization (lambda)
+    grad_lim = None  # limit of the max magnitude of numbers in a gradient
 
     def __new__(cls, lr=lr, *, reg=None, lamb=None, **kwds):
         kwds.update((k, v) for k, v in locals().items()
@@ -20,6 +21,8 @@ class Optimizer(Function):
         with Param.not_training():
             for par in parameters:
                 assert isinstance(par, Param) and not par.constant
+                if self.grad_lim:
+                    par.shrink_grad(self.grad_lim)
                 par += self.delta(par)
                 if self.reg:
                     par += self.lr * self.lamb * self.reg_term(par)

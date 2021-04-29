@@ -104,13 +104,13 @@ P536(<9>, variable, dtype=int32)  # the output will be a variable Param
 >>> z.reshape(-1)._ctx  # the operation (as the "context" of the output) is stored for autograd
 reshape(z(<3, 3>, variable, dtype=int32), -1)
 
-"Some functions can be initialized to have trainable Params in addition to being applied directly."
+"Some functions can be initialized in addition to being applied directly."
 >>> np.all(tc.affine(x, w, b) == x @ w + b).item()
 True
->>> affine = tc.affine(2)  # pass the output dimension to init an affine function containing trainable Params
+>>> affine = tc.affine(2)  # initialize the function if the input Param is absent
 >>> hasattr(affine, 'w')
 False
->>> x.shape, affine(x)
+>>> x.shape, affine(x)  # affine(2) initializes an affine map of output dimensionality = 2
 ((10, 4), P520(<10, 2>, variable))
 >>> hasattr(affine, 'w') and affine.w
 P624(<4, 2>, trainable)  # Params in these functions get initialized only after receiving inputs 
@@ -125,11 +125,11 @@ P560(<32, 3, 5, 5>, trainable)
 >>> xn = tc.normalize(x)
 >>> xn.mean().item(), xn.std().item()
 (0., 1.)  # actually has some tiny errors
->>> Norm = tc.normalize(axis=0)
+>>> layerNorm = tc.normalize(axis=0)
 normalize()  # now it is a function containing trainable weight and bias
->>> Norm(x); x.shape
+>>> layerNorm(x); x.shape
 (10, 4)
->>> Norm.w, Norm.b
+>>> layerNorm.w, layerNorm.b  # Params initialized according to x.shape
 (P304(<1, 4>, trainable), P416(<1, 4>, trainable))
 >>> a = Param(1, size=[100, 10]); a.sum().item()
 1000
@@ -137,7 +137,7 @@ normalize()  # now it is a function containing trainable weight and bias
 474  # dropout rate = 0.5 by default
 >>> np.count_nonzero(tc.dropout(a, p=0.3))
 713
->>> dropout = tc.dropout(p=0.2)  # some functions are "partial" - similar to functools.partial
+>>> dropout = tc.dropout(p=0.2)
 >>> np.count_nonzero(dropout(a))
 802
 

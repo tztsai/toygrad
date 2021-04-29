@@ -14,7 +14,7 @@ There can be 3 ways to apply a function or operation:
 """
 import numpy as np
 from .core import Param, Function, Operation, registermethod
-from .utils.dev import ensure_list, random, wraps, dbg, info
+from .utils.dev import ensure_list, random, wraps, dbg, info, timeit
 
 
 class UnaryOp(Operation):
@@ -91,18 +91,13 @@ class Mul(BinaryOp):
     
 class TrueDiv(BinaryOp):
     def apply(self, x, y):
-        if isinstance(y, np.ndarray):
-            self.deriv = 1/y, -x/y**2
-        else:
-            self.deriv = 1/y, None
+        self.deriv = 1/y, -x/y**2 if isinstance(y, np.ndarray) else None
         return x / y
 
 class Pow(BinaryOp):
     def apply(self, x, y):
-        if isinstance(y, np.ndarray):
-            self.deriv = y * x**(y-1), x**y * np.log(x)
-        else:
-            self.deriv = y * x**(y-1), None
+        self.deriv = y * x**(y-1), \
+            x**y * np.log(x) if isinstance(y, np.ndarray) else None
         return x ** y
 
 class maximum(BinaryOp):
@@ -115,6 +110,7 @@ class maximum(BinaryOp):
 
 class softmax(Operation):
     ndim_in, ndim_out = 1, 1
+    
     def apply(self, x):
         ex = np.exp(x)
         y = ex / np.sum(ex, axis=-1, keepdims=True)
@@ -125,13 +121,17 @@ class softmax(Operation):
 
 class softmaxCrossentropy(Operation):
     ndim_in, ndim_out = (1, 1), 0
+    
     def apply(self, input, labels):
+        # check whether the labels are valid (sums to 1 along the second axis)
         sample_ids = random.sample(range(len(input)), min(10, len(input)))
         assert np.allclose(np.sum(labels[sample_ids], axis=1), 1.)
-        probabs = (ex := np.exp(input)) / np.sum(ex, axis=-1, keepdims=True)
-        e = -np.sum(labels * np.log(probabs), axis=-1)
-        self.deriv = (probabs - labels) / e.size, None
-        return e.mean()
+        
+        prs = (ex := np.exp(input)) / np.sum(ex, axis=-1, keepdims=True)
+        ls = np.sum(labels * (nlls := -np.log(prs)), axis=-1)
+        const_labels = not isinstance(self.inputs[1], Param) or self.inputs[1].constant
+        self.deriv = (prs - labels) / ls.size, None if const_labels else nlls / ls.size
+        return ls.mean()
 
 registermethod(softmaxCrossentropy, 'smce')  # register a shorter alias
 
@@ -159,10 +159,11 @@ class reshape(Operation):
         else:
             assert len(args) == 1
             shape = args[0]
+        self._xsh = np.shape(x)
         return np.reshape(x, shape)
 
     def backward(self, grad_y):
-        yield grad_y.reshape(np.shape(self._x))
+        yield grad_y.reshape(self._xsh)
 
 class transpose(Operation):
     def apply(self, x, order=None):
@@ -175,6 +176,7 @@ class transpose(Operation):
 
 class getitem(Operation):
     def apply(self, x, idx):
+        self._x, self._idx = x, idx
         return x[idx]
     
     def backward(self, grad_y):
@@ -202,11 +204,12 @@ def convert_axis(x, axis):
 class sum(Operation):
     def apply(self, x, axis=None, keepdims=False, **_):
         axis = convert_axis(x, axis)
+        self._zeros = np.zeros_like(x)
         self._sh = [1 if i in axis else s for i, s in enumerate(np.shape(x))]
         return np.sum(x, axis=axis, keepdims=keepdims)
     
     def backward(self, grad_y):
-        yield grad_y.reshape(self._sh) + np.zeros_like(self._x)
+        yield grad_y.reshape(self._sh) + self._zeros
 
 class max(Operation):
     def apply(self, x, axis=None, keepdims=False, **_):
@@ -340,6 +343,7 @@ class conv2D(Operation):
     def apply(self, input, filters, stride=1, groups=1):
         if type(stride) is int:
             self._stride = stride = (stride, stride)
+        self._groups = groups
 
         bs, ims, ih, iw = input.shape
         c_out, c_in, fh, fw = filters.shape

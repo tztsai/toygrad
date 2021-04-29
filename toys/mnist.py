@@ -103,7 +103,7 @@ class MLP:
         assert X.shape[1] == self.shape[0], 'input dimension mismatch'
         assert Y.shape[1] == self.shape[-1], 'output dimension mismatch'
 
-        batches = BatchLoader(X, Y, batch_size=bs)
+        batches = BatchLoader(X, Y, bs=bs)
         history = {'loss': [], 'val_acc': []}
 
         for epoch in range(epochs):
@@ -166,9 +166,9 @@ clf = classifier(10)
 
 clf2 = MLP([input_dim, 128, 10], lr=5e-3)
 
-# with Profile('test MLP'):
-#     clf2.fit(x_train, y_train, epochs=1, bs=128)
+with Profile('test MLP'):
+    clf2.fit(x_train, y_train, epochs=3, bs=128)
 
 with Profile('test toych'):
-    clf.fit(x_train, y_train, epochs=1, loss='smce', bs=128, lr=0.5,
+    clf.fit(x_train, y_train, epochs=3, loss='smce', bs=128, lr=0.5,
             optimizer='sgd', val_data=(x_val, y_val), metrics={'val_acc': accuracy})

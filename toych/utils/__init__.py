@@ -5,13 +5,14 @@ import random
 import itertools
 import moviepy
 import numpy as np
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 from collections import defaultdict
 from .dev import pbar, setloglevel, Profile
 
 
 def onehot(x, k, *, cold=0, hot=1):
-    x = np.asarray(x)
+    if not isinstance(x, np.ndarray):
+        x = np.asarray(x)
     m = np.full((*x.shape, k), cold, dtype=np.float)
     for idx in itertools.product(*map(range, x.shape)):
         m[idx][x[idx]] = hot
@@ -39,16 +40,16 @@ def accuracy(probabs, labels):
 
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
-    batch_size = 16
+    bs = 16
 
-    def __init__(self, *data, batch_size=None):
+    def __init__(self, *data, bs=None):
         self.data = data
         self.size = len(data[0])
         assert all(len(x) == self.size for x in data), \
             'different sizes of data'
 
-        if batch_size: self.batch_size = batch_size
-        self.steps = range(0, self.size, self.batch_size)
+        if bs: self.bs = bs
+        self.steps = range(0, self.size, self.bs)
 
     def __len__(self):
         return len(self.steps)
@@ -56,7 +57,7 @@ class BatchLoader:
     def __iter__(self):
         order = np.random.permutation(self.size)
         for i in self.steps:
-            ids = order[i: i + self.batch_size]
+            ids = order[i : i+self.bs]
             yield [a[ids] for a in self.data]
 
 

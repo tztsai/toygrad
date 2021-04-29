@@ -9,6 +9,7 @@ class Model(Function):
     """ Baseclass of learning models.
     Wrap any function `f` by `Model(f)` to convert it to a model.
     """
+    blackbox = False
     
     def __new__(cls, *args, **kwds):
         if cls is Model:
@@ -39,16 +40,20 @@ class Model(Function):
         input, target = np.asarray(input), np.asarray(target)
         assert input.shape and target.shape
 
-        batches = BatchLoader(input, target, batch_size=bs)
+        batches = BatchLoader(input, target, bs=bs)
         optimizer = self.getoptim(optimizer, lr=lr)
         loss_func = self.getloss(loss)
         history = defaultdict(list)
+
+        if val_data:
+            val_batches = BatchLoader(*val_data, bs=1000)
+            metrics['val_loss'] = loss_func
 
         info('\nStart training %s', self)
         info('Input shape: %s', input.shape)
         info('Target shape: %s', target.shape)
         info('Total epochs: %d', epochs)
-        info('Batch size: %d', batches.batch_size)
+        info('Batch size: %d', batches.bs)
         info('Optimizer: %s', optimizer)
 
         for epoch in range(epochs):
@@ -66,11 +71,10 @@ class Model(Function):
 
             with Param.not_training():
                 if val_data:
-                    x_val, t_val = val_data
-                    y_val = self(x_val)
-                    metrics['val_loss'] = loss_func
                     for name, metric in metrics.items():
-                        history[name].append(metric(y_val, t_val))
+                        pairs = [(self(x), t) for x, t in val_batches]
+                        score = np.mean([metric(*p) for p in pairs])
+                        history[name].append(score)
                 for callback in callbacks:
                     callback(**locals())
 
