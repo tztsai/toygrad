@@ -13,7 +13,7 @@ There can be 3 ways to apply a function or operation:
 >>> dropout(0.3)(x)         # if the function's attribute 'need_init' is True
 """
 import numpy as np
-from .core import Param, Function, Operation, registermethod
+from .core import Param, Function, Operation, registermethod, save, load
 from .utils.dev import ensure_list, random, wraps, dbg, info, timeit
 
 
@@ -419,6 +419,7 @@ class normalize(Function):
         self.running_mean = np.zeros(shape)
         self.running_std = np.zeros(shape)
         self.built = True
+        dbg('init normalize: shape=%s', shape)
     
     def update_args(self, input):
         if not self.built: self.build(input)
@@ -432,14 +433,14 @@ class normalize(Function):
         if axis is None:
             axis = self.axis
 
-        batch_mean = mean(input, axis, keepdims=True)
-        batch_std = std(input, axis, keepdims=True, eps=self.eps)
+        batch_mean = mean(input, axis, keepdims=True).data
+        batch_std = std(input, axis, keepdims=True, eps=self.eps).data
 
         if self.built and self.track_stats:
             m = 0. if self.track_len == 0 else self.mom
             self.track_len += 1
-            self.running_mean[:] = m * self.running_mean + (1 - m) * batch_mean
-            self.running_std[:]  = m * self.running_std + (1 - m) * batch_std
+            self.running_mean = m * self.running_mean + (1 - m) * batch_mean
+            self.running_std  = m * self.running_std + (1 - m) * batch_std
             x = (input - self.running_mean) / self.running_std
         else:
             x = (input - batch_mean) / batch_std

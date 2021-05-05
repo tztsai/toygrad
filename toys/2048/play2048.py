@@ -122,7 +122,7 @@ if interactive_score_plot:
     fig, ax = plt.subplots()
     fig.show()
 
-for eps in (pb := pbar(range(EPISODES), unit='eps')):
+for eps in (pb := progbar(range(EPISODES), unit='eps')):
     obs = env.reset()
     obs_record = []  # for animating the episode afterwards
     done = False

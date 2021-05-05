@@ -3,8 +3,9 @@ import logging
 import atexit
 import random
 import re
+import io
 import inspect
-import pprint
+import pickle, json
 import itertools
 import numpy as np
 from queue import Queue
@@ -89,7 +90,7 @@ def setloglevel(level):
 def ensure_list(a):
     return [a] if type(a) not in [list, tuple] else list(a)
 
-def pbar(iterable, unit='batch', **kwds):
+def progbar(iterable, unit='batch', **kwds):
     """A process bar."""
     if logger.level > logging.INFO: return iterable
     return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)
@@ -156,12 +157,12 @@ def abstractmethod(mtd):
 def isabstract(obj):
     return getattr(obj, "__isabstractmethod__", False)
 
-# @contextmanager
-# def set_temporarily(obj, attr, val):
-#     cur_val = getattr(obj, attr)
-#     setattr(obj, attr, val)
-#     yield
-#     setattr(obj, attr, cur_val)
+@contextmanager
+def tempset(obj, attr, val):
+    cur_val = getattr(obj, attr)
+    setattr(obj, attr, val)
+    yield
+    setattr(obj, attr, cur_val)
     
 # def DefaultNone(cls):
 #     """A class decorator that changes the `__getattribute__` method so that for

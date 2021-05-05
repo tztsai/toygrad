@@ -1,12 +1,11 @@
 import functools
 import inspect
-import pickle
 import random
 import itertools
 import numpy as np
 # import matplotlib.pyplot as plt
 from collections import defaultdict
-from .dev import pbar, setloglevel, Profile
+from .dev import progbar, setloglevel, tempset, Profile
 
 
 def onehot(x, k, *, cold=0, hot=1):

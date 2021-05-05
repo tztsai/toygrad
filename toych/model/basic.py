@@ -1,8 +1,8 @@
 from ..core import Function
 from ..func import *
 from ..optim import *
-from ..utils import BatchLoader, graph, pickle
-from ..utils.dev import defaultdict, info, dbg, warn, pbar, Profile
+from ..utils import BatchLoader, graph
+from ..utils.dev import defaultdict, info, dbg, warn, progbar, Profile
 from ..utils.graph import show_graph
 
 
@@ -55,18 +55,18 @@ class Model(Function):
             val_batches = BatchLoader(*val_data, bs=val_bs)
             metrics['val_loss'] = loss_fn
 
-        info('\nStart training %s', self)
-        info('Input shape: %s', input.shape)
-        info('Target shape: %s', target.shape)
-        info('Total epochs: %d', epochs)
-        info('Batch size: %d', batches.bs)
-        info('Optimizer: %s', optimizer)
+        info('\nTraining model: %s', self)
+        info('Input shape:\t%s', input.shape)
+        info('Target shape:\t%s', target.shape)
+        info('Total epochs:\t%d', epochs)
+        info('Batch size:\t%d', batches.bs)
+        info('Optimizer:\t%s', optimizer)
 
         for epoch in range(epochs):
             info('\nEpoch %d:', epoch)
             
             loss = 0
-            for x, y in pbar(batches):
+            for x, y in progbar(batches):
                 o = self(x)              # pass forward the input
                 ls = loss_fn(o, y)       # compute the loss
                 params = ls.backward()   # pass backward the loss
@@ -92,20 +92,6 @@ class Model(Function):
                                   for k, v in history.items() if v))
 
         return dict(history)
-
-    def save(self, filename):
-        with open(filename, 'wb') as f:
-            pickle.dump(self, f)
-            
-    @classmethod
-    def load(cls, filename_or_bytes):
-        if type(filename_or_bytes) is bytes:
-            return pickle.loads(filename_or_bytes)
-        with open(filename_or_bytes, 'rb') as f:
-            return pickle.load(f, encoding='bytes')
-        
-    def state(self):
-        return pickle.dumps(self)
 
     @staticmethod
     def getloss(obj):  # I can override this to add regularization loss

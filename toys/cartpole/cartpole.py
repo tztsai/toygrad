@@ -89,7 +89,7 @@ eps_rewards = []
 fig, ax = plt.subplots()
 fig.show()
 
-for eps in (pb := pbar(range(500), unit='eps')):
+for eps in (pb := progbar(range(500), unit='eps')):
     obs = env.reset()
     obs_record = []
     done = False

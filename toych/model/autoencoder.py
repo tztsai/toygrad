@@ -17,8 +17,8 @@ class VAE(AutoEncoder):
         self.enc = encoder
         self.dec = decoder
         self.ld = latent_dim
-        self.mu = affine(latent_dim, with_bias=0)
-        self.sigma = affine(latent_dim, with_bias=0)
+        self.mu = affine(latent_dim)
+        self.sigma = affine(latent_dim)
         
     def apply(self, input):
         e = self.enc(input)
@@ -31,7 +31,7 @@ class VAE(AutoEncoder):
     def kl_div(mu, sigma):
         """ KL divergence w.r.t. the N(0, I) prior. """
         mu2, sigma2 = mu ** 2, sigma ** 2 + 1e-6
-        return mu2.mean() + sigma2.mean() - sigma2.log().add(1).mean()
+        return mu2.mean() + sigma2.mean() - sigma2.log().mean()
 
     def getloss(self, obj):
         loss = super().getloss(obj)

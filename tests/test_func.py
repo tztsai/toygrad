@@ -1,5 +1,7 @@
 from importer import *
 
+utils.dev.time.sleep(1)
+
 class F(Operation):
     need_init = 1
     def apply(self, x, a, k=1):
@@ -34,6 +36,10 @@ class H(Function):
 
 h = H()
 assert (h(3) == [4, 5, 6]).all().item()
+save(Param((3, 4)))
+save(h, 'fn_h')
+h = load('fn_h')
+assert h(3).sum().item() == 15
 
 assert affine(np.zeros([5, 3]), Param((3, 4)), Param(size=4)).shape == (5, 4)
 

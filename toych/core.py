@@ -153,15 +153,11 @@ class Param(np.ndarray):
         return super().__getattribute__(name)
 
     def __hash__(self): return id(self)
+    
+    def __reduce__(self):  # for serialization
+        state = super().__reduce__()
+        return (*state[:2], (*state[2], self.__dict__))
 
-    def __reduce__(self):
-        """Used for pickling the Param object."""
-        pickled_state = super().__reduce__()
-        my_state = self.__dict__.copy()
-        my_state['_ctx'] = None
-        my_state['_grad'] = None
-        return (*pickled_state[:2], (*pickled_state[2], my_state))
-        
     def __setstate__(self, state):
         super().__setstate__(state[:-1])
         self.__dict__.update(state[-1])
@@ -191,18 +187,17 @@ class FunctionMeta(type):
             if '__init__' in ns:
                 cls.need_init = True
 
-    def new_type(cls, fn):
+    def new_type(cls, fn, namespace={}):
         """ Converts a function `fn` to a subclass of `cls`. """
         assert callable(fn), f"{cls}.new_type must be applied to a callable object"
-        fc = FunctionMeta(fn.__name__, (cls, *cls.__bases__), {})
+        fc = FunctionMeta(fn.__name__, (cls, *cls.__bases__), namespace)
+        fc.need_init = False
         if isinstance(fn, cls):
             fc.parent = fn
-            fc.need_init = False
         else:
             fc.apply = staticmethod(fn)
-        fc.__module__ = fn.__module__
         return fc
-
+    
     def __repr__(cls):
         return cls.__name__
     
@@ -222,7 +217,7 @@ def wrap_call(call):
     @wraps(call)
     def wrapper(self, *args, **kwds):
         self.inputs = args
-        if self.parent:
+        if hasattr(type(self), 'parent'):
             args, kwds = self.parent.update_args(*args, **kwds)
         return call(self, *args, **kwds)
     return wrapper
@@ -241,7 +236,7 @@ class Function(metaclass=FunctionMeta):
     register = False
     blackbox = True
     need_init = False  # automatically set to True if the class has __init__
-        
+
     def __new__(cls, *args, **kwds):
         fn = cls.new(args, kwds)
         if cls.need_init and not array_at_first(args):
@@ -254,7 +249,6 @@ class Function(metaclass=FunctionMeta):
     def new(cls, args, kwds):
         fn = object.__new__(cls)
         fn.signature = (cls, args, kwds)
-        fn.parent = getattr(cls, 'parent', None)
         return fn
 
     def __init__(self, *args, **kwds):
@@ -275,16 +269,16 @@ class Function(metaclass=FunctionMeta):
         try: args, kwds = args + self.args, {**self.kwds, **kwds}
         except AttributeError: pass
         return args, kwds
-    
+
     @property
     def __name__(self):
         if not hasattr(self, '__name'):
             fn, args, kwds = self.signature
             self.__name = repr(fn) + signature_str(*args, **kwds)
         return self.__name
-    
-    def __repr__(self): return self.__name__
 
+    def __repr__(self): return self.__name__
+    
 
 class Operation(Function):
     """ Baseclass of Param operations with automatic differentiation.
@@ -364,3 +358,30 @@ class Operation(Function):
         return output
     
     __call__ = wrap_call(__call__)
+
+
+class Serializer(pickle.Pickler):
+    def reducer_override(self, obj):
+        if isinstance(obj, FunctionMeta) and hasattr(obj, 'parent'):
+            return FunctionMeta, (obj.__name__, obj.__bases__,
+                                  {k: v for k, v in obj.__dict__.items()
+                                   if k[:2] != '__' or k[-2:] != '__'})
+        else:
+            return NotImplemented
+    
+def serialize(obj):
+    s = Serializer(f := io.BytesIO())
+    s.dump(obj)
+    return f.getvalue()
+
+def save(obj, filename=None):
+    data = serialize(obj)
+    if not filename: return data
+    with open(filename, 'wb') as f:
+        f.write(data)
+
+def load(filename_or_bytes):
+    if type(filename_or_bytes) is bytes:
+        return pickle.loads(filename_or_bytes)
+    with open(filename_or_bytes, 'rb') as f:
+        return pickle.load(f)
