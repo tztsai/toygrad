@@ -130,7 +130,7 @@ class Param(np.ndarray):
         if not Param.training: return
         assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
         params = self.deepwalk()
-        self.grad = np.ones(self.shape)
+        self.grad = 1.
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
             x_grads = ctx.backward(y.grad)

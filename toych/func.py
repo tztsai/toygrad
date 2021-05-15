@@ -88,7 +88,7 @@ class Mul(BinaryOp):
     def apply(self, x, y):
         self.deriv = y, x
         return x * y
-    
+
 class TrueDiv(BinaryOp):
     def apply(self, x, y):
         self.deriv = 1/y, -x/y**2 if isinstance(y, np.ndarray) else None
@@ -403,12 +403,14 @@ class normalize(Function):
     eps = 1e-5
     mom = 0.9
     axis = 0  # the axis along which to apply normalization
+    track_stats = False
     
-    def __init__(self, axis=None, track_stats=False):
+    def __init__(self, axis=None, track_stats=None):
         if axis is not None:  # otherwise use class attribute
             self.axis = axis
-        self.track_len = 0
-        self.track_stats = track_stats
+        if track_stats:
+            self.track_stats = True
+            self.track_len = 0
         self.built = False
     
     def build(self, input):
@@ -416,8 +418,9 @@ class normalize(Function):
         shape = [1 if i in axes else s for i, s in enumerate(np.shape(input))]
         self.w = Param(size=shape)
         self.b = Param(size=shape)
-        self.running_mean = np.zeros(shape)
-        self.running_std = np.zeros(shape)
+        if self.track_stats:
+            self.running_mean = np.zeros(shape)
+            self.running_std = np.zeros(shape)
         self.built = True
         dbg('init normalize: shape=%s', shape)
     
@@ -426,29 +429,25 @@ class normalize(Function):
         return super().update_args(input)
     
     def apply(self, input, axis=None):
-        if not hasattr(self, 'built'):
-            self.built = False
-        else:
-            assert axis is None
         if axis is None:
             axis = self.axis
 
         batch_mean = mean(input, axis, keepdims=True).data
         batch_std = std(input, axis, keepdims=True, eps=self.eps).data
 
-        if self.built and self.track_stats:
+        if self.built:
             m = 0. if self.track_len == 0 else self.mom
-            self.track_len += 1
             self.running_mean = m * self.running_mean + (1 - m) * batch_mean
-            self.running_std  = m * self.running_std + (1 - m) * batch_std
+            self.running_std = m * self.running_std + (1 - m) * batch_std
+            self.track_len += 1
+
+        if self.track_stats and not Param.training:
             x = (input - self.running_mean) / self.running_std
         else:
             x = (input - batch_mean) / batch_std
 
-        if self.built and Param.training:
-            return x * self.w + self.b
-        else:
-            return x
+        if self.built: return x * self.w + self.b
+        else: return x
 
 class normalize2D(normalize):
     axis = (0, 2, 3)

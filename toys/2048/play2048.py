@@ -2,7 +2,7 @@ from msvcrt import getwch
 import matplotlib
 import matplotlib.pyplot as plt
 
-from .gym2048 import Game2048Env
+from gym2048 import Game2048Env
 from toych import *
 del sum, max
 
@@ -48,9 +48,11 @@ class DQNAgent(Model):
         self.apply = Compose(
             self.preprocess,
             affine(128), normalize(),
-            leakyReLU, #dropout,
+            leakyReLU, dropout,
             affine(64), normalize(),
-            leakyReLU,
+            leakyReLU, dropout,
+            affine(32), normalize(),
+            leakyReLU, dropout,
             affine(self.dim_out)
         )
         
