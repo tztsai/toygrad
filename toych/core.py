@@ -130,7 +130,7 @@ class Param(np.ndarray):
         if not Param.training: return
         assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
         params = self.deepwalk()
-        self.grad = 1.
+        self.grad = np.array(1.)
         for y in reversed(params):
             if (ctx := y._ctx) is None: continue
             x_grads = ctx.backward(y.grad)
@@ -179,32 +179,29 @@ class Param(np.ndarray):
 
 
 class FunctionMeta(type):
-    def __init__(cls, name, bases, ns):
-        super().__init__(name, bases, ns)
+    def __init__(cls, name, bases, namespace):
+        super().__init__(name, bases, namespace)
         if not isabstract(cls.apply):
             if cls.register:
                 registermethod(cls)
-            if '__init__' in ns:
+            if '__init__' in namespace:
                 cls.need_init = True
 
-    def new_type(cls, fn, namespace={}):
-        """ Converts a function `fn` to a subclass of `cls`. """
-        assert callable(fn), f"{cls}.new_type must be applied to a callable object"
-        fc = FunctionMeta(fn.__name__, (cls, *cls.__bases__), namespace)
-        fc.need_init = False
-        if isinstance(fn, cls):
-            fc.parent = fn
-        else:
-            fc.apply = staticmethod(fn)
-        return fc
-    
+    def __call__(self, *args, **kwds):
+        if isabstract(self.apply):
+            assert len(args) == 1 and not kwds and callable(f := args[0])
+            new_func = FunctionMeta(f.__name__, (self, *self.__bases__), {})
+            new_func.apply = staticmethod(f)
+            return new_func
+        return super().__call__(*args, **kwds)
+
     def __repr__(cls):
         return cls.__name__
     
 
 def registermethod(fn, name=None):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
-    if not isinstance(fn, type): fn = Function.new_type(fn)
+    if not isinstance(fn, type): fn = Function(fn)
     if name is None: name = fn.__name__.lower()
     setattr(Param, name, lambda *args, **kwds: fn(*args, **kwds))
     if name in ['add', 'sub', 'neg', 'mul', 'truediv', 'pow', 'matmul', 'getitem']:
@@ -216,10 +213,19 @@ def registermethod(fn, name=None):
 def wrap_call(call):
     @wraps(call)
     def wrapper(self, *args, **kwds):
-        self.inputs = args
-        if hasattr(type(self), 'parent'):
-            args, kwds = self.parent.update_args(*args, **kwds)
-        return call(self, *args, **kwds)
+        if self.need_init:
+            args, kwds = self.update_args(*args, **kwds)
+            ctx = Context(self)
+        else:
+            ctx = self
+        ctx.inputs = args
+        output = call(self, *args, **kwds)
+        if isinstance(output, Param):
+            if isinstance(self, Operation):
+                output._ctx = ctx
+            elif self.blackbox:
+                output._outer_ctx = ctx
+        return output
     return wrapper
 
 
@@ -238,47 +244,50 @@ class Function(metaclass=FunctionMeta):
     need_init = False  # automatically set to True if the class has __init__
 
     def __new__(cls, *args, **kwds):
-        fn = cls.new(args, kwds)
-        if cls.need_init and not array_at_first(args):
-            fn.__init__(*args, **kwds)
-            return cls.new_type(fn)
-        else:
-            return fn(*args, **kwds)
-
-    @classmethod
-    def new(cls, args, kwds):
-        fn = object.__new__(cls)
-        fn.signature = (cls, args, kwds)
-        return fn
-
+        fn = super().__new__(cls)
+        fn.__sig = (cls, args, kwds)
+        if array_at_first(args): fn.need_init = False
+        return fn if fn.need_init else fn(*args, **kwds)
+    
     def __init__(self, *args, **kwds):
         self.args, self.kwds = args, kwds
-
+    
     @abstractmethod
     def apply(self, *args, **kwds): NotImplemented
 
+    @wrap_call
     def __call__(self, *args, **kwds):
-        output = self.apply(*args, **kwds)
-        if isinstance(output, Param) and self.blackbox:
-            output._outer_ctx = self
-        return output
-
-    __call__ = wrap_call(__call__)
+        return self.apply(*args, **kwds)
 
     def update_args(self, *args, **kwds):
-        try: args, kwds = args + self.args, {**self.kwds, **kwds}
-        except AttributeError: pass
+        """ Update positional and keyword arguments passed to self.apply. """
+        if hasattr(self, 'args'):
+            return args + self.args, {**self.kwds, **kwds}
         return args, kwds
 
     @property
     def __name__(self):
         if not hasattr(self, '__name'):
-            fn, args, kwds = self.signature
-            self.__name = repr(fn) + signature_str(*args, **kwds)
+            cls, args, kwds = self.__sig
+            self.__name = f'{cls}{signature_str(*args, **kwds)}'
         return self.__name
 
     def __repr__(self): return self.__name__
+
+
+class Context:
+    def __init__(self, fn):
+        self.__fn = fn
+        
+    def __getattr__(self, name):
+        return getattr(self.__fn, name)
     
+    def __repr__(self):
+        return repr(self.__fn) + signature_str(*self.inputs)
+
+    def backward(self, grad_out):
+        return type(self.__fn).backward(self, grad_out)
+
 
 class Operation(Function):
     """ Baseclass of Param operations with automatic differentiation.
@@ -326,11 +335,11 @@ class Operation(Function):
         if bc_axes: grad = np.sum(grad, axis=tuple(bc_axes))
         return grad.reshape(np.shape(input))
 
+    @wrap_call
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
-        pars = args + tuple(kwds.values())
-        
         try:
+            pars = args + tuple(kwds.values())
             dtype = next(p for p in pars if isinstance(p, Param)).dtype
         except StopIteration:  # no Params in the arguments
             return self.apply(*args, **kwds)
@@ -344,41 +353,15 @@ class Operation(Function):
                 return np.asarray(x)
             return x
         
-        def map_pars(fn, obj):
-            if type(obj) is tuple:
-                return tuple(map_pars(fn, x) for x in obj)
-            elif type(obj) is dict:
-                return {k: map_pars(fn, x) for k, x in obj.items()}
-            else:
-                return fn(obj)
-        
-        args, kwds = map_pars(param2array, (args, kwds))
-        output = Param(self.apply(*args, **kwds), dtype=dtype, kind=kind)
-        output._ctx = self
-        return output
-    
-    __call__ = wrap_call(__call__)
+        args, kwds = deepmap(param2array, (args, kwds))
+        return Param(self.apply(*args, **kwds), dtype=dtype, kind=kind)
 
-
-class Serializer(pickle.Pickler):
-    def reducer_override(self, obj):
-        if isinstance(obj, FunctionMeta) and hasattr(obj, 'parent'):
-            return FunctionMeta, (obj.__name__, obj.__bases__,
-                                  {k: v for k, v in obj.__dict__.items()
-                                   if k[:2] != '__' or k[-2:] != '__'})
-        else:
-            return NotImplemented
-    
-def serialize(obj):
-    s = Serializer(f := io.BytesIO())
-    s.dump(obj)
-    return f.getvalue()
 
 def save(obj, filename=None):
-    data = serialize(obj)
-    if not filename: return data
+    if not filename:
+        return pickle.dumps(obj)
     with open(filename, 'wb') as f:
-        f.write(data)
+        pickle.dump(obj, f)
 
 def load(filename_or_bytes):
     if type(filename_or_bytes) is bytes:

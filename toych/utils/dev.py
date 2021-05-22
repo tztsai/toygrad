@@ -3,9 +3,8 @@ import logging
 import atexit
 import random
 import re
-import io
 import inspect
-import pickle, json
+import pickle
 import itertools
 import numpy as np
 from queue import Queue
@@ -111,6 +110,14 @@ def signature_str(*args, **kwds):
 
 def array_at_first(args):
     return args and isinstance(args[0], np.ndarray)
+
+def deepmap(f, obj):
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(deepmap(f, v) for v in obj)
+    elif isinstance(obj, dict):
+        return {k: deepmap(f, v) for k, v in obj.items()}
+    else:
+        return f(obj)
 
 # @timeit
 # def bind_pars(f, *args, **kwds):

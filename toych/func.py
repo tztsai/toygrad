@@ -12,6 +12,7 @@ There can be 3 ways to apply a function or operation:
 >>> x.dropout(0.3)          # if the function has been registered
 >>> dropout(0.3)(x)         # if the function's attribute 'need_init' is True
 """
+from sys import base_exec_prefix
 import numpy as np
 from .core import Param, Function, Operation, registermethod, save, load
 from .utils.dev import ensure_list, random, wraps, dbg, info, timeit
@@ -299,45 +300,49 @@ class maxPool(pool2D):
 
 ### operations or methods containing parameters to be initialized ###
 
-class affine(Function):
+class Parametrized(Function):
+    def init_pars(self, input):
+        """ Initialize parameters here. """
+
+    def __call__(self, *args, **kwds):
+        if self.need_init and not hasattr(self, 'initialized'):
+            self.init_pars(*args)
+            self.initialized = True
+        return super().__call__(*args, **kwds)
+
+class affine(Parametrized):
     def __init__(self, d_out, with_bias=True):
         self.d_out = d_out
         self.with_bias = with_bias
-        self.built = False
         
-    def build(self, input):
+    def init_pars(self, input):
         self.d_in = input.shape[-1]
         self.w = Param(size=[self.d_in, self.d_out])
         self.b = Param(size=self.d_out) if self.with_bias else None
-        self.built = True
         dbg(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')
 
-    def update_args(self, input):
-        if not self.built: self.build(input)
-        return super().update_args(input, weight=self.w, bias=self.b)
+    def update_args(self, x):
+        return super().update_args(x, weight=self.w, bias=self.b)
 
     def apply(self, input, weight, bias=None):
         return input @ weight if bias is None else input @ weight + bias
 
-class conv2D(Operation):
+class conv2D(Parametrized, Operation):
     """Convolve 2D images with filters."""
     
     def __init__(self, c_out, size, stride=1, groups=1):
         if type(size) is int: size = (size, size)
         self.c_in, self.c_out = None, c_out
         self.size, self.stride, self.groups = size, stride, groups
-        self.built = False
 
-    def build(self, input):
+    def init_pars(self, input):
         self.c_in = input.shape[1]
         self.filters = Param(size=[self.c_out, self.c_in, *self.size])
-        self.built = True
         dbg('init conv2D: im_size=%s, in_channels=%d, out_channels=%d',
             input.shape[-2:], self.c_in, self.c_out)
         
-    def update_args(self, input):  # returns the args passed to "self.apply"
-        if not self.built: self.build(input)
-        return super().update_args(input, filters=self.filters,
+    def update_args(self, ims):
+        return super().update_args(ims, filters=self.filters,
                                    stride=self.stride, groups=self.groups)
     
     def apply(self, input, filters, stride=1, groups=1):
@@ -398,22 +403,19 @@ class conv2D(Operation):
             
         return gx, gf
 
-class normalize(Function):
+class normalize(Parametrized, Function):
     register = True
     eps = 1e-5
     mom = 0.9
     axis = 0  # the axis along which to apply normalization
-    track_stats = False
     
-    def __init__(self, axis=None, track_stats=None):
-        if axis is not None:  # otherwise use class attribute
-            self.axis = axis
+    def __init__(self, axis=axis, track_stats=False):
+        self.axis = axis
+        self.track_stats = track_stats
         if track_stats:
-            self.track_stats = True
             self.track_len = 0
-        self.built = False
     
-    def build(self, input):
+    def init_pars(self, input):
         axes = ensure_list(self.axis)
         shape = [1 if i in axes else s for i, s in enumerate(np.shape(input))]
         self.w = Param(size=shape)
@@ -421,33 +423,26 @@ class normalize(Function):
         if self.track_stats:
             self.running_mean = np.zeros(shape)
             self.running_std = np.zeros(shape)
-        self.built = True
         dbg('init normalize: shape=%s', shape)
     
-    def update_args(self, input):
-        if not self.built: self.build(input)
-        return super().update_args(input)
-    
     def apply(self, input, axis=None):
-        if axis is None:
-            axis = self.axis
+        if axis is None: axis = self.axis
 
         batch_mean = mean(input, axis, keepdims=True).data
         batch_std = std(input, axis, keepdims=True, eps=self.eps).data
 
-        if self.built:
+        if self.need_init and self.track_stats:
             m = 0. if self.track_len == 0 else self.mom
             self.running_mean = m * self.running_mean + (1 - m) * batch_mean
             self.running_std = m * self.running_std + (1 - m) * batch_std
             self.track_len += 1
-
-        if self.track_stats and not Param.training:
-            x = (input - self.running_mean) / self.running_std
-        else:
-            x = (input - batch_mean) / batch_std
-
-        if self.built: return x * self.w + self.b
-        else: return x
+    
+        try:
+            mu, sigma = self.running_mean, self.running_std
+        except AttributeError:
+            mu, sigma = batch_mean, batch_std
+        x = (input - mu) / sigma
+        return x * self.w + self.b if self.need_init else x
 
 class normalize2D(normalize):
     axis = (0, 2, 3)

@@ -20,8 +20,12 @@ class Optimizer(Function):
     def __new__(cls, lr=lr, *, reg=None, lamb=None, grad_lim=None, **kwds):
         kwds.update((k, v) for k, v in locals().items()
                     if k not in ['cls', 'kwds'] and v is not None)
-        opt = cls.new((), kwds)
-        opt.__dict__.update(kwds)
+        opt = super().__new__(cls)
+        for k, v in kwds.items():
+            if hasattr(cls, k):
+                setattr(opt, k, v)
+            else:
+                raise NameError(f'invalid keyword argument "{k}"')
         return opt
         
     def __call__(self, parameters):

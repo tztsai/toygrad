@@ -1,19 +1,20 @@
+from toych.func import Parametrized
 from importer import *
 
 utils.dev.time.sleep(1)
 
 class F(Operation):
     need_init = 1
-    def apply(self, x, a, k=1):
-        return k*(x + a)
+    def apply(self, x, k=1):
+        return k * x
     
-f = F(3, k=1)
+f = F(k=2)
 
 assert mean(np.array([1,2,3])) == 2.
-assert f(Param(100)) == 103.
-assert F(Param(100), 13) == 113.
+assert f(Param(100)) == 200
+assert F(Param(100), 3) == 300
 
-class G(Operation):
+class G(Parametrized, Operation):
     def __init__(self):
         self.w = Param([1, 2, 3])
     def update_args(self, x):
@@ -23,10 +24,10 @@ class G(Operation):
         return x + w
 
 g = G()
-repr(g); repr(g)
-assert (g(Param([3])) == G(Param([3]), g.parent.w)).all().item()
+print(repr(g), repr(g))
+assert (g(Param([3])) == G(Param([3]), g.w)).all().item()
     
-class H(Function):
+class H(Parametrized, Function):
     def __init__(self):
         self.w = Param([1, 2, 3], dtype=float)
     def update_args(self, x):

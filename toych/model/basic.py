@@ -14,11 +14,6 @@ class Model(Function):
     default_loss = 'mse'
     default_optimizer = 'Adam'
     
-    def __new__(cls, *args, **kwds):
-        if cls is Model:
-            return Model.new_type(*args, **kwds)
-        return cls.new(args, kwds)
-    
     def eval(self, input):
         with Param.not_training():
             return self(input)
