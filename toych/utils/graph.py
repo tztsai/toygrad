@@ -54,7 +54,7 @@ def deepwalk(param):
         if ctx in visited: return [y]
         visited.add(ctx)
         ret = [y, [ctx, *[walk(x, visited) for x in ctx.inputs]]]
-        if ctx.parent:
+        if ctx.need_init:
             ret[1].insert(0, ApplyNode())
             ret[1][1] = [ctx]
         return ret

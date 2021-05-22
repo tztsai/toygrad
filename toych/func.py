@@ -428,20 +428,20 @@ class normalize(Parametrized, Function):
     def apply(self, input, axis=None):
         if axis is None: axis = self.axis
 
-        batch_mean = mean(input, axis, keepdims=True).data
-        batch_std = std(input, axis, keepdims=True, eps=self.eps).data
+        batch_mean = mean(input, axis, keepdims=True)#.data
+        batch_std = std(input, axis, keepdims=True, eps=self.eps)#.data
 
         if self.need_init and self.track_stats:
             m = 0. if self.track_len == 0 else self.mom
-            self.running_mean = m * self.running_mean + (1 - m) * batch_mean
-            self.running_std = m * self.running_std + (1 - m) * batch_std
+            self.running_mean = m * self.running_mean + (1 - m) * batch_mean.data
+            self.running_std = m * self.running_std + (1 - m) * batch_std.data
             self.track_len += 1
+            
+            if not Param.training:
+                x = (input - self.running_mean) / self.running_std
+                return x * self.w + self.b
     
-        try:
-            mu, sigma = self.running_mean, self.running_std
-        except AttributeError:
-            mu, sigma = batch_mean, batch_std
-        x = (input - mu) / sigma
+        x = (input - batch_mean) / batch_std
         return x * self.w + self.b if self.need_init else x
 
 class normalize2D(normalize):
