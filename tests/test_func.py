@@ -1,4 +1,3 @@
-from toych.func import Parametrized
 from importer import *
 
 utils.dev.time.sleep(1)
@@ -24,7 +23,6 @@ class G(Parametrized, Operation):
         return x + w
 
 g = G()
-print(repr(g), repr(g))
 assert (g(Param([3])) == G(Param([3]), g.w)).all().item()
     
 class H(Parametrized, Function):
@@ -50,3 +48,7 @@ assert aff(np.zeros([5, 3])).shape == (5, 10)
 a = meanPool(4, stride=2)
 p = a(Param(size=[1,3,10,10]))
 assert p.shape == (1, 3, 1, 1)
+
+a, b, c = map(Param, [(10, 5), (10, 5), (10, 5)])
+max([a, b, c]).backward()
+assert {a.grad.max(), b.grad.max(), c.grad.max()} == {0, 1}

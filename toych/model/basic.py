@@ -11,15 +11,20 @@ class Model(Function):
     Wrap any function `f` by `Model(f)` to convert it to a model.
     """
     blackbox = False
-    default_loss = 'mse'
+    batch_loader = BatchLoader
+    default_loss = 'MSE'
     default_optimizer = 'Adam'
+
+    def apply(self, input):
+        raise NotImplementedError
     
     def eval(self, input):
         with Param.not_training():
             return self(input)
     
     def fit(self, input, target, *, epochs=10, lr=None, bs=None, optimizer=None, loss=None, 
-            val_data=None, val_bs=500, metrics={}, callbacks=(), showgraph=False) -> dict:
+            val_data=None, val_bs=500, metrics={}, callbacks=(), callback_each_batch=False,
+            showgraph=False) -> dict:
         """ Given the input data, train the parameters to fit the target data.
 
         Args:
@@ -35,19 +40,19 @@ class Model(Function):
             whose outputs will be tracked in the training history
         - callbacks (list of function): functions to be called at the end of each epoch,
             each function taking the NN object as input
+        - callback_each_batch: whether to callback after each batch or after each epoch
+        - showgraph: whether to show the computation graph of the model
 
         Returns: A dict of training history including losses etc.
         """
         input, target = np.asarray(input), np.asarray(target)
-        assert input.shape and target.shape
-
-        batches = BatchLoader(input, target, bs=bs)
+        batches = self.batch_loader(input, target, bs=bs)
         optimizer = self.getoptim(optimizer or self.default_optimizer, lr=lr)
         loss_fn = self.getloss(loss or self.default_loss)
         history = defaultdict(list)
 
         if val_data:
-            val_batches = BatchLoader(*val_data, bs=val_bs)
+            val_batches = self.batch_loader(*val_data, bs=val_bs)
             metrics['val_loss'] = loss_fn
 
         info('\nTraining model: %s', self)
@@ -61,7 +66,8 @@ class Model(Function):
             info('\nEpoch %d:', epoch)
             
             loss = 0
-            for x, y in progbar(batches):
+            pb = progbar(batches)
+            for t, (x, y) in enumerate(pb):
                 o = self(x)              # pass forward the input
                 ls = loss_fn(o, y)       # compute the loss
                 params = ls.backward()   # pass backward the loss
@@ -72,6 +78,10 @@ class Model(Function):
                     show_graph(ls)
                     showgraph = False
 
+                if callback_each_batch:
+                    for callback in callbacks:
+                        callback(**locals())
+
             history['loss'].append(loss / len(batches))
 
             with Param.not_training():
@@ -80,6 +90,8 @@ class Model(Function):
                         pairs = [(self(x), y) for x, y in val_batches]
                         score = np.mean([metric(*p) for p in pairs])
                         history[name].append(score)
+            
+            if not callback_each_batch:
                 for callback in callbacks:
                     callback(**locals())
 

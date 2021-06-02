@@ -29,7 +29,7 @@ y(1, variable, dtype=int32)  # if the Param is 0-dimensional, the first item is 
 >>> y.backward(); x.grad  # compute gradients wrt `y` and generates related trainable Params
 <generator object ...>
 array([0., 0., 1.])
->>> x.zero_grad(); x.grad
+>>> x.del_grad(); x.grad
 0
 >>> y = tc.reLU(x); y.data  # check the data in the form of an array
 array([0, 0, 1])
@@ -83,7 +83,7 @@ e(1.03, variable)
 >>> def SGD(pars):
         for p in pars:
             p -= 1e-3 * p.grad
-            p.zero_grad()
+            p.del_grad()
 >>> pars = list(e.backward()); pars
 [b(<3>, trainable), w(<4, 3>, trainable)]
 >>> SGD(pars)

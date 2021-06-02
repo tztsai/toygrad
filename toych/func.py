@@ -12,10 +12,9 @@ There can be 3 ways to apply a function or operation:
 >>> x.dropout(0.3)          # if the function has been registered
 >>> dropout(0.3)(x)         # if the function's attribute 'need_init' is True
 """
-from sys import base_exec_prefix
 import numpy as np
-from .core import Param, Function, Operation, registermethod, save, load
-from .utils.dev import ensure_list, random, wraps, dbg, info, timeit
+from .core import Param, Function, Operation, registermethod, save, load, copy
+from .utils.dev import ensure_list, random, dbg, info
 
 
 class UnaryOp(Operation):
@@ -125,8 +124,9 @@ class softmaxCrossentropy(Operation):
     
     def apply(self, input, labels):
         # check whether the labels are valid (sums to 1 along the second axis)
-        sample_ids = random.sample(range(len(input)), min(10, len(input)))
-        assert np.allclose(np.sum(labels[sample_ids], axis=1), 1.)
+        if np.ndim(input) >= 2:
+            sample_ids = random.sample(range(len(input)), min(10, len(input)))
+            assert np.allclose(np.sum(labels[sample_ids], axis=1), 1.)
         
         prs = (ex := np.exp(input)) / np.sum(ex, axis=-1, keepdims=True)
         ls = np.sum(labels * (nlls := -np.log(prs)), axis=-1)
@@ -142,13 +142,16 @@ registermethod(softmaxCrossentropy, 'smce')  # register a shorter alias
 class MatMul(Operation):
     def apply(self, x, y):
         x, y = np.asarray(x), np.asarray(y)
+        self._xsh, self._ysh = x.shape, y.shape
+        out = x @ y
         while x.ndim < 2: x = np.expand_dims(x, 0)
         while y.ndim < 2: y = np.expand_dims(y, -1)
         self._x, self._y = x, y
-        self._xsh, self._ysh = map(np.shape, self.inputs)
-        return x @ y
+        return out
     
     def backward(self, grad_out):
+        while grad_out.ndim < 2:
+            grad_out = np.expand_dims(grad_out, 0)
         gx = grad_out @ np.swapaxes(self._y, -1, -2)
         gy = np.swapaxes(self._x, -1, -2) @ grad_out
         return gx.reshape(self._xsh), gy.reshape(self._ysh)
@@ -316,7 +319,7 @@ class affine(Parametrized):
         self.with_bias = with_bias
         
     def init_pars(self, input):
-        self.d_in = input.shape[-1]
+        self.d_in = np.shape(input)[-1]
         self.w = Param(size=[self.d_in, self.d_out])
         self.b = Param(size=self.d_out) if self.with_bias else None
         dbg(f'init affine: in_dims={self.d_in}, out_dims={self.d_out}')

@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.core.defchararray import add
 from .utils.dev import *
 
 
@@ -84,6 +85,9 @@ class Param(np.ndarray):
         self.name = name
         self._ctx = None
         self._grad = None
+        
+    @property
+    def data(self): return np.asarray(self)
 
     @property
     def grad(self): return self._grad
@@ -96,33 +100,33 @@ class Param(np.ndarray):
         self._grad = grad
         
     @property
-    def has_grad(self):
-        return self.grad is not None
+    def has_grad(self): return self.grad is not None
 
-    def zero_grad(self):
-        self._grad = None
+    def del_grad(self): self._grad = None
+
+    def detach(self): self._ctx = None
     
     @classmethod
     @contextmanager
     def not_training(cls):
-        """Use `with Param.not_training(): ...` to temporarily disable training."""
         cls.training = False; yield; cls.training = True
-
-    @property
-    def data(self): return np.asarray(self)
     
     def deepwalk(self):
         stack, visited, params = [[0, self]], {self}, []
+        def visit(par):
+            if isinstance(par, (list, tuple)):
+                [visit(p) for p in par]
+            elif isinstance(par, Param):
+                if not par.constant and par not in visited:
+                    visited.add(par); stack.append([0, par])
         while stack:  # toposort the related params
             exiting, param = stack.pop()
             if exiting:
                 params.append(param)
-                continue
-            stack.append([1, param])
-            if param._ctx:
-                [[visited.add(p), stack.append([0, p])]
-                 for p in reversed(param._ctx.inputs)
-                 if isinstance(p, Param) and not p.constant and p not in visited]
+            else:
+                stack.append([1, param])
+                if param._ctx:
+                    [visit(p) for p in reversed(param._ctx.inputs)]
         return params
 
     @timeit
@@ -131,12 +135,15 @@ class Param(np.ndarray):
         assert not self.constant and self.ndim == 0, 'backprop must start from a scalar Param'
         params = self.deepwalk()
         self.grad = np.array(1.)
-        for y in reversed(params):
-            if (ctx := y._ctx) is None: continue
-            x_grads = ctx.backward(y.grad)
-            for x, g in zip(ctx.inputs, x_grads):
-                if isinstance(x, Param) and not x.constant:
-                    x.grad = x.grad + g if x.has_grad else g
+        def add_grad(x, g):  # make it recursive
+            if isinstance(x, Param) and not x.constant:
+                x.grad = x.grad + g if x.has_grad else g
+            elif isinstance(x, (list, tuple)):
+                assert np.shape(x) == np.shape(g)
+                [add_grad(_x, _g) for _x, _g in zip(x, g)]
+        for y in filter(lambda y: y._ctx, reversed(params)):
+            xs, gs = y._ctx.inputs, y._ctx.backward(y.grad)
+            [add_grad(x, g) for x, g in zip(xs, gs)]
         return (p for p in params if p.trainable)
 
     def view(self, *args):
@@ -220,7 +227,7 @@ def wrap_call(call):
             ctx = self
         ctx.inputs = args
         output = call(self, *args, **kwds)
-        if isinstance(output, Param):
+        if Param.training and isinstance(output, Param):
             if isinstance(self, Operation):
                 output._ctx = ctx
             elif self.blackbox:
@@ -261,9 +268,8 @@ class Function(metaclass=FunctionMeta):
 
     def update_args(self, *args, **kwds):
         """ Update positional and keyword arguments passed to self.apply. """
-        if hasattr(self, 'args'):
-            return args + self.args, {**self.kwds, **kwds}
-        return args, kwds
+        try: return args + self.args, {**self.kwds, **kwds}
+        except: return args, kwds
 
     @property
     def __name__(self):
@@ -338,9 +344,12 @@ class Operation(Function):
     @wrap_call
     def __call__(self, *args, **kwds):
         """Wraps the apply method to process arguments and the return value."""
+        def find_params(obj):
+            if isinstance(obj, (list, tuple)):
+                for it in obj: yield from find_params(it)
+            elif isinstance(obj, Param): yield obj
         try:
-            pars = args + tuple(kwds.values())
-            dtype = next(p for p in pars if isinstance(p, Param)).dtype
+            dtype = next(find_params(args + tuple(kwds.values()))).dtype
         except StopIteration:  # no Params in the arguments
             return self.apply(*args, **kwds)
 
@@ -368,3 +377,5 @@ def load(filename_or_bytes):
         return pickle.loads(filename_or_bytes)
     with open(filename_or_bytes, 'rb') as f:
         return pickle.load(f)
+
+def copy(obj): return load(save(obj))

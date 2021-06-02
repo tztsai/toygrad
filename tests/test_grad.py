@@ -22,7 +22,7 @@ def checkgrad(w, lossfun):
     Lw = lossfun(w)
     params = Lw.backward()
     g1, g2 = w.grad, numgrad(w)
-    for p in params: p.zero_grad()
+    for p in params: p.del_grad()
     
     if not np.allclose(g1, g2, rtol=1e-3, atol=1e-6):
         graph.show_graph(Lw)

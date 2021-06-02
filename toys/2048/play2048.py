@@ -1,9 +1,9 @@
+import sys
 from msvcrt import getwch
-import matplotlib
-import matplotlib.pyplot as plt
-
 from gym2048 import Game2048Env
-from toych import *
+
+sys.path.append('..')
+from importer import *
 del sum, max
 
 onehot = utils.onehot
@@ -26,7 +26,7 @@ class DQNAgent(Model):
     eps_decay = 30000
     replay_batch_size = 256
 
-    optim = Adam(reg='l2')
+    optim = optim.Adam(lr=1e-3)
     
     class Memory(list):
         capacity = 50000
@@ -47,12 +47,10 @@ class DQNAgent(Model):
     def __init__(self):
         self.apply = Compose(
             self.preprocess,
-            affine(128), normalize(),
-            leakyReLU, dropout,
-            affine(64), normalize(),
-            leakyReLU, dropout,
-            affine(32), normalize(),
-            leakyReLU, dropout,
+            affine(256), reLU, dropout,
+            affine(128), reLU, dropout,
+            affine(64), reLU, dropout,
+            affine(32), reLU, dropout,
             affine(self.dim_out)
         )
         
@@ -93,7 +91,7 @@ class DQNAgent(Model):
         self.optim(loss.backward())
 
 try:
-    agent = Model.load('2048-agent')
+    agent = load('2048-agent')
     print('model loaded')
     print('memory size:', len(agent.memory))
 except FileNotFoundError:
@@ -143,7 +141,7 @@ for eps in (pb := progbar(range(EPISODES), unit='eps')):
 
     if play_mode == 'agent':
         if eps % SYNC_INTERVAL == 0:
-            agent.past_copy = Model.load(agent.state())
+            agent.past_copy = copy(agent)
         agent.replay()
     
     scores.append(env.score)
@@ -156,9 +154,9 @@ for eps in (pb := progbar(range(EPISODES), unit='eps')):
         fig.canvas.start_event_loop(0.001)
     
     if (eps + 1) % 500 == 0:
-        agent.save('2048-agent')
+        save(agent, '2048-agent')
     if env.score > 1000:
-        episode_gif(obs_record)#, f'cartpole:{eps_reward}.gif')
+        episode_gif(obs_record, f'2048-{env.score}.gif')
         
     env.close()
     

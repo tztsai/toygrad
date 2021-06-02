@@ -39,13 +39,13 @@ def accuracy(probabs, labels):
 class BatchLoader:
     """An iterable loader that produces minibatches of data."""
     bs = 16
+    randperm = True
+    preprocess = None
 
     def __init__(self, *data, bs=None):
         self.data = data
         self.size = len(data[0])
-        assert all(len(x) == self.size for x in data), \
-            'different sizes of data'
-
+        assert all(len(x) == self.size for x in data), 'different sizes of data'
         if bs: self.bs = bs
         self.steps = range(0, self.size, self.bs)
 
@@ -53,10 +53,14 @@ class BatchLoader:
         return len(self.steps)
 
     def __iter__(self):
-        order = np.random.permutation(self.size)
+        if self.randperm:
+            order = np.random.permutation(self.size)
+        else:
+            order = range(self.size)
         for i in self.steps:
-            ids = order[i : i+self.bs]
-            yield [a[ids] for a in self.data]
+            ids = order[i:i+self.bs]
+            yield [a[ids] if self.preprocess is None else
+                   self.preprocess(a[ids]) for a in self.data]
 
 
 def plot_history(history, *args, title=None, xlabel='epoch', **kwds):
@@ -75,10 +79,10 @@ def setparnames(**bindings):
         if type(par).__name__ == 'Param':
             par.name = name
 
-def makegif(frames, filename='_tmp_.gif', fps=60, **kwds):
-    from moviepy.editor import VideoClip
-    clip = VideoClip(frames)
-    clip.write_gif(filename, fps=fps)
+def makegif(frames, filename='_tmp_.gif', fps=60):
+    from moviepy.editor import ImageSequenceClip
+    clip = ImageSequenceClip(frames, fps=fps)
+    clip.write_gif(filename)
     
 # def discretize(x, splits):
 #     """Discretize the data with the splitting points."""

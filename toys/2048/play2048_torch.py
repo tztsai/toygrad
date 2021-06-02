@@ -111,7 +111,7 @@ class DQNAgent(nn.Sequential):
         for param in self.parameters():
             param.grad.data.clamp_(-1., 1.)
         optimizer.step()
-        optimizer.zero_grad()
+        optimizer.del_grad()
 
 
 try:

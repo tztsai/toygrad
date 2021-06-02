@@ -1,7 +1,5 @@
 import gym
-import numpy as np
-import matplotlib.pyplot as plt
-from toych import *
+from importer import *
 
 del sum, max
 
@@ -53,12 +51,12 @@ def episode_gif(states, gifname=None):
 
 
 try:
-    agent = Model.load('cartpole-agent')
+    agent = load('cartpole-agent')
     print('model loaded')
 except FileNotFoundError:
     agent = Agent(2)
 
-optim = Adam(lr=1e-3)
+optim = optim.Adam(lr=1e-3)
 
 
 def loss_func(memory, outputs=None):
@@ -83,13 +81,14 @@ def smooth(records, k=10):
     return smoothed_records
 
 
+episodes = 40
 memory = Memory()
 eps_rewards = []
 
 fig, ax = plt.subplots()
 fig.show()
 
-for eps in (pb := progbar(range(500), unit='eps')):
+for eps in (pb := progbar(range(episodes), unit='eps')):
     obs = env.reset()
     obs_record = []
     done = False
@@ -117,9 +116,9 @@ for eps in (pb := progbar(range(500), unit='eps')):
         plt.pause(0.01)
     
     if (eps + 1) % 100 == 0:
-        agent.save('cartpole-agent')
-    # if eps_reward >= 500:
-    #     episode_gif(obs_record)#, f'cartpole:{eps_reward}.gif')
+        save(agent, 'cartpole-agent')
+    if eps_reward >= 400:
+        episode_gif(obs_record, f'cartpole-{eps_reward}.gif')
 
     env.close()
     memory.clear()
