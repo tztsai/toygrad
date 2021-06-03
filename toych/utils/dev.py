@@ -13,10 +13,7 @@ from logging import DEBUG, INFO, WARN, ERROR
 from tqdm import tqdm
 from functools import wraps, partial
 from contextlib import contextmanager
-from collections import defaultdict, namedtuple
-from typing import Union, Optional, List, Tuple
-from types import FunctionType
-
+from collections import defaultdict
 
 class Profile:
     debug_counts, debug_times = defaultdict(int), defaultdict(float)
@@ -95,7 +92,8 @@ def progbar(iterable, unit='batch', **kwds):
     return tqdm(iterable, bar_format='\t{l_bar}{bar:24}{r_bar}', unit=unit, **kwds)
     
 def signature_str(*args, **kwds):
-    ss = list(map(repr, args)) + [f'{k}={v}' for k, v in kwds.items()]
+    ss = list(map(lambda x: array_repr(x) if isinstance(x, np.ndarray) else repr(x),
+                  args)) + [f'{k}={v}' for k, v in kwds.items()]
     l = 0
     for i, s in enumerate(ss):
         l += len(s)
@@ -103,13 +101,14 @@ def signature_str(*args, **kwds):
             ss[i] = '\n' + ss[i]
             l = 0
     s = ', '.join(ss)
-    if '\n' in s:
-        return '(\n  %s\n)' % s.replace('\n', '\n  ')
-    else:
-        return '(%s)' % s
+    return '(\n  %s\n)' % s.replace('\n', '\n  ') if '\n' in s else '(%s)' % s
 
 def array_at_first(args):
     return args and isinstance(args[0], np.ndarray)
+
+def array_repr(a):
+    name = getattr(a, 'name', type(a).__name__)
+    return f"{name}{list(np.shape(a)) if np.shape(a) else '(%s)' % a.item()}" 
 
 def deepmap(f, obj):
     if isinstance(obj, (list, tuple)):

@@ -5,9 +5,7 @@ from collections import Counter
 sys.path.append('..')
 
 from importer import *
-del sum, max
-
-time.sleep(1)
+time.sleep(.5)
 
 DATAPATH = 'goblet.txt' # '史记.txt'
 BOOKLEN = -1
@@ -53,8 +51,7 @@ def generate(**vars):
     global smooth_loss
     if vars['t'] % 200 == 0:
         rnn = vars['self']
-        start = text2array('. ')
-        seq = rnn.generate(100, start=start)
+        seq = rnn.generate(100, start=text2array('. '))
         print(array2text(seq))
     if smooth_loss is None:
         smooth_loss = vars['ls'].item()
@@ -66,4 +63,4 @@ RNN = model.rnn.RNN
 RNN.batch_loader.preprocess = staticmethod(text2array)
 
 nn = RNN(256, DATA_DIM)
-nn.fit(book, epochs=2, bs=25, callbacks=[generate], callback_each_batch=True)
+nn.fit(book, epochs=2, bs=5, callbacks=[generate], callback_each_batch=True)

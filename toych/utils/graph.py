@@ -1,33 +1,18 @@
 import graphviz as gv
 import numpy as np
 import random
-import os
 import numbers
-from toych.core import Function, Param
+from toych.core import Function, Context, array_repr
 
-
-NODES = {}  # {id: (node, label)}
 
 def nodelabel(node):
-    if not isinstance(node, np.ndarray):
-        if isinstance(node, Function):
-            return str(type(node))
-        return str(node)
-    nid = id(node)
-    if nid not in NODES:
-        if isinstance(node, np.ndarray) and node.size > 2:
-            if not isinstance(node, Param):
-                node = node.view(Param)
-            lb = node.simple_repr()
-        else:
-            try:
-                lb = '%.2e' % float(node)
-            except:
-                lb = str(node)
-        NODES[nid] = (node, lb)
+    if isinstance(node, np.ndarray):
+        if not getattr(node, 'name', 1): repr(node)
+        return array_repr(node)
     else:
-        lb = NODES[nid][1]
-    return lb
+        if isinstance(node, Function) and not node.need_init:
+            return repr(type(node))
+        return repr(node)
 
 def dot_graph(graph):
     def add_edges(graph):
@@ -53,16 +38,12 @@ def deepwalk(param):
             except: return [y]
         if ctx in visited: return [y]
         visited.add(ctx)
-        ret = [y, [ctx, *[walk(x, visited) for x in ctx.inputs]]]
-        if ctx.need_init:
-            ret[1].insert(0, ApplyNode())
-            ret[1][1] = [ctx]
+        if isinstance(ctx, Context):
+            ret = [y, [ctx.getfunc()], *[walk(x, visited) for x in ctx.inputs]]
+        else:
+            ret = [y, [ctx, *[walk(x, visited) for x in ctx.inputs]]]
         return ret
     return walk(param)
-
-class ApplyNode:
-    def __str__(self): return 'apply'
-
 
 def show_graph(param, filename=None):
     dot = dot_graph(deepwalk(param))

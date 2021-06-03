@@ -1,5 +1,4 @@
 import numpy as np
-from numpy.core.defchararray import add
 from .utils.dev import *
 
 
@@ -139,7 +138,7 @@ class Param(np.ndarray):
             if isinstance(x, Param) and not x.constant:
                 x.grad = x.grad + g if x.has_grad else g
             elif isinstance(x, (list, tuple)):
-                assert np.shape(x) == np.shape(g)
+                assert len(x) == len(g)
                 [add_grad(_x, _g) for _x, _g in zip(x, g)]
         for y in filter(lambda y: y._ctx, reversed(params)):
             xs, gs = y._ctx.inputs, y._ctx.backward(y.grad)
@@ -168,21 +167,18 @@ class Param(np.ndarray):
     def __setstate__(self, state):
         super().__setstate__(state[:-1])
         self.__dict__.update(state[-1])
-
-    def simple_repr(self, auto_name=False):
-        name = self.name
-        if auto_name and not self.name:
-            bindings = inspect.currentframe().f_back.f_back.f_locals
-            for k, v in bindings.items():
-                if id(self) == id(v): name = self.name = k; break
-        if not name: name = 'array' if self.constant else 'P' + str(id(self))[-3:]
-        return f"{name}{list(self.shape) if self.ndim else '(%s)' % self.item()}"    
     
     def __repr__(self):
-        s = self.simple_repr(self.auto_name).replace('[', '(<').replace(']', '>)')
+        if not self.name:
+            if self.auto_name:
+                bindings = inspect.currentframe().f_back.f_locals
+                for k, v in bindings.items():
+                    if id(self) == id(v): self.name = k; break
+            else:
+                self.name = 'Param' if self.constant else 'P' + str(id(self))[-4:]
         s_kind = next(k for k, v in Param.kinds.items() if v == self.kind)
         s_dtype = '' if self.dtype is np.dtype('float') else ', dtype=' + self.dtype.name
-        return f"{s[:-1]}, {s_kind}{s_dtype})"
+        return array_repr(self).replace('[', '(<').replace(']', f'>, {s_kind}{s_dtype})')
 
 
 class FunctionMeta(type):
@@ -204,7 +200,7 @@ class FunctionMeta(type):
 
     def __repr__(cls):
         return cls.__name__
-    
+
 
 def registermethod(fn, name=None):
     """Registers a class or a function as a method of Param, can be used as a decorator."""
@@ -290,6 +286,9 @@ class Context:
     
     def __repr__(self):
         return repr(self.__fn) + signature_str(*self.inputs)
+    
+    def getfunc(self):
+        return self.__fn
 
     def backward(self, grad_out):
         return type(self.__fn).backward(self, grad_out)

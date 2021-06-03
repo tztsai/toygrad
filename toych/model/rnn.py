@@ -1,5 +1,4 @@
 from .basic import *
-del sum
 
 
 class RNN(Model):
@@ -7,7 +6,7 @@ class RNN(Model):
     
     def __init__(self, hidden_dim, out_dim):
         self.Axh = affine(hidden_dim)
-        self.Ahh = affine(hidden_dim)
+        self.Ahh = affine(hidden_dim) 
         self.Ahy = affine(out_dim)
         self.h = zeros(hidden_dim)
         
@@ -27,18 +26,14 @@ class RNN(Model):
     
     def generate(self, n, start, reset=True):
         if reset: self.reset_hstate()
-        out = [self(start)[-1]]
         with Param.not_training():
-            [out.append(self.apply(out[-1])) for _ in range(n - 1)]
+            out = [self(start)[-1]]
+            [out.append(self.apply(out[-1])) for _ in range(n-1)]
         return np.array(out)
     
     @classmethod
     def default_loss(cls, output, labels):
-        loss, n = 0, 0
-        for y, t in zip(output, labels):
-            loss += y.smce(t)
-            n += 1
-        return loss / n
+        return mean([y.smce(t) for y, t in zip(output, labels)])
 
     def fit(self, input, target=None, *, epochs=10, lr=None, bs=None, optimizer=None, loss=None, 
             val_data=None, val_bs=500, metrics={}, callbacks=(), callback_each_batch=False,
