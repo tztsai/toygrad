@@ -174,8 +174,8 @@ P215(<100, 10>, variable)
 ## TODO
 
 * [ ] let toych play with 2048
-* [ ] FIX conv2D
-* [ ] implement VAE
+* [x] FIX conv2D
+* [x] implement VAE
 * [ ] implement GAN
 * [ ] implement ResNet
 * [ ] implement a transformer
