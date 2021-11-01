@@ -1,6 +1,6 @@
 # Toych
 
-State-of-the-art deep learning framework. Just kidding 🤣🤣
+Deep learning framework built from scratch.
 
 ## How to play
 
