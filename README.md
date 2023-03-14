@@ -179,3 +179,4 @@ P215(<100, 10>, variable)
 * [ ] implement a transformer
 * [ ] implement a minimal GPT
 * [ ] implement GAN
+* [ ] implement a diffusion model
