@@ -1,6 +1,6 @@
-# Toych
+# Toygrad
 
-Deep learning framework built from scratch.
+An autograd framework built from scratch.
 
 ## How to play
 
