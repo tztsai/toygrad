@@ -17,7 +17,7 @@ Try out the following code.
 6
 
 "Create a Param. There are 3 kinds of Param: constant, variable and trainable."
->>> Param.auto_name = True  # automatically name the Param (only for fun, can be quite slow)
+>>> Param.auto_name = True  # automagically name the Param
 >>> x = Param([-1, 0, 1]); x
 x(<3>, variable, dtype=int32)  # the first item is the shape of the Param, the second is its kind
 >>> y = tc.max(x); y
